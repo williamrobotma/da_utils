@@ -339,12 +339,21 @@ class Evaluator:
     def _run_milisi(self, sample_id, n_jobs, split, emb, emb_noda, y_dis):
         logger.debug(f"Using {n_jobs} jobs with parallel backend \"{'threading'}\"")
 
-        all_embs = np.concatenate([emb, emb_noda], axis=1)
-        all_embs_bal, y_dis_bal = RandomUnderSampler(random_state=int(sample_id)).fit_resample(
-            all_embs, y_dis
-        )
-        emb_bal = all_embs_bal[:, : all_embs_bal.shape[1] // 2]
-        emb_noda_bal = all_embs_bal[:, all_embs_bal.shape[1] // 2 :]
+        if self.pretraining:
+            all_embs = np.concatenate([emb, emb_noda], axis=1)
+        else:
+            all_embs = emb
+
+        all_embs_bal, y_dis_bal = RandomUnderSampler(
+            random_state=int.from_bytes(sample_id.encode("utf8"), "big") % 2**32
+        ).fit_resample(all_embs, y_dis)
+
+        if self.pretraining:
+            emb_bal = all_embs_bal[:, : all_embs_bal.shape[1] // 2]
+            emb_noda_bal = all_embs_bal[:, all_embs_bal.shape[1] // 2 :]
+        else:
+            emb_bal = all_embs_bal
+            emb_noda_bal = None
 
         print(" milisi", end=" ")
         meta_df = pd.DataFrame(y_dis_bal, columns=["Domain"])
@@ -446,7 +455,6 @@ class Evaluator:
         return np.nan
 
     def _plot_layers(self, adata_st, adata_st_d):
-
         cmap = mpl.cm.get_cmap("Accent_r")
 
         color_range = list(
@@ -727,7 +735,7 @@ class Evaluator:
         n_rows = int(math.ceil(n_celltypes / 5))
 
         numlist = [self.sc_sub_dict2.get(t) for t in celltypes[:-1]]
-        numlist.append([v for k, v in self.sc_sub_dict2.items() if k not in celltypes[:-1]])
+        numlist.extend([v for k, v in self.sc_sub_dict2.items() if k not in celltypes[:-1]])
         # cluster_assignments = [
         #     "Cancer region",
         #     "Pancreatic tissue",
@@ -736,6 +744,9 @@ class Evaluator:
         #     "Stroma",
         # ]
         logging.debug(f"Plotting Cell Fractions")
+        logging.debug(f"numlist: {numlist}")
+        logging.debug(f"celltypes: {celltypes}")
+        logging.debug(f"sc_sub_dict2: {self.sc_sub_dict2}")
         fig, ax = plt.subplots(n_rows, 5, figsize=(20, 4 * n_rows), constrained_layout=True, dpi=10)
         for i, num in enumerate(numlist):
             self._plot_cellfraction(num, adata_st, pred_sp, ax.flat[i])
@@ -989,7 +1000,6 @@ class Evaluator:
         self.realspots_d = realspots_d
 
     def eval_dlpfc_spots(self, pred_sp_d, pred_sp_noda_d, adata_st, adata_st_d):
-
         if "" in self.st_sample_id_d:
             splits = [""]
         else:
@@ -1026,15 +1036,27 @@ class Evaluator:
         print("Plotting Samples")
         n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(sids))
         logging.debug(f"n_jobs_samples: {n_jobs_samples}")
-        aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
-            delayed(self._plot_samples_pdac)(
-                sid,
-                adata_st_d[sid],
-                pred_sp_d[sid],
-                pred_sp_noda_d[sid] if pred_sp_noda_d else None,
+        if n_jobs_samples < 4:
+            print("n_jobs_samples < 4, no parallelization")
+            aucs = [
+                self._plot_samples_pdac(
+                    sid,
+                    adata_st_d[sid],
+                    pred_sp_d[sid],
+                    pred_sp_noda_d[sid] if pred_sp_noda_d else None,
+                )
+                for sid in sids
+            ]
+        else:
+            aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
+                delayed(self._plot_samples_pdac)(
+                    sid,
+                    adata_st_d[sid],
+                    pred_sp_d[sid],
+                    pred_sp_noda_d[sid] if pred_sp_noda_d else None,
+                )
+                for sid in sids
             )
-            for sid in sids
-        )
         return aucs
 
     def eval_sc(self, metric_ctp):
