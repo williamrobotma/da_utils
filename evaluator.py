@@ -156,7 +156,7 @@ class Evaluator:
 
         self.pretrain_folder = os.path.join(model_folder, "pretrain")
         self.advtrain_folder = os.path.join(model_folder, "advtrain")
-        self.samp_split_folder = os.path.join(self.advtrain_folder, "samp_split")
+        # self.samp_split_folder = os.path.join(self.advtrain_folder, "samp_split")
         # self.pretrain_model_path = os.path.join(pretrain_folder, f"final_model.pth")
 
     def gen_pca(self, sample_id, split, y_dis, emb, emb_noda=None):
@@ -255,9 +255,9 @@ class Evaluator:
         else:
             splits = self.splits
 
-        if self.data_params.get("samp_split", False):
-            model = ModelWrapper(self.samp_split_folder, "final_model")
-        elif self.data_params.get("train_using_all_st_samples", False):
+        # if self.data_params.get("samp_split", False):
+        #     model = ModelWrapper(self.samp_split_folder, "final_model")
+        if self.data_params.get("train_using_all_st_samples", False):
             model = ModelWrapper(self.advtrain_folder, "final_model")
         else:
             model = None
@@ -953,9 +953,9 @@ class Evaluator:
 
         sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
 
-        if self.data_params.get("samp_split", False):
-            path = self.samp_split_folder
-        elif self.data_params["train_using_all_st_samples"]:
+        # if self.data_params.get("samp_split", False):
+        #     path = self.samp_split_folder
+        if self.data_params["train_using_all_st_samples"]:
             path = self.advtrain_folder
         else:
             path = None
@@ -1086,18 +1086,19 @@ class Evaluator:
                 for sample_id in sids[1:]:
                     self.jsd_d["noda"][split][sample_id] = score
 
-        if self.data_params.get("samp_split", False):
-            model = ModelWrapper(self.samp_split_folder)
-        elif self.data_params["train_using_all_st_samples"]:
+        # if self.data_params.get("samp_split", False):
+        #     model = ModelWrapper(self.samp_split_folder)
+        if self.data_params["train_using_all_st_samples"]:
             model = ModelWrapper(self.advtrain_folder)
         else:
             model = None
 
         for sample_id in sids:
             if model is None:
-                model = ModelWrapper(os.path.join(self.advtrain_folder, sample_id))
-
-            self._calc_jsd(metric_ctp, sample_id, model=model, da="da")
+                model_samp = ModelWrapper(os.path.join(self.advtrain_folder, sample_id))
+                self._calc_jsd(metric_ctp, sample_id, model=model_samp, da="da")
+            else:
+                self._calc_jsd(metric_ctp, sample_id, model=model, da="da")
 
     def _calc_jsd(self, metric_ctp, sample_id, model=None, da="da"):
         for split in self.splits:
