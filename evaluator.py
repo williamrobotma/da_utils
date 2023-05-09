@@ -4,8 +4,9 @@ import logging
 import math
 import os
 import pickle
+import re
 import shutil
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 import harmonypy as hm
 import matplotlib as mpl
@@ -23,7 +24,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import RocCurveDisplay
 
 from src.da_models.model_utils.utils import ModelWrapper, dict_to_lib_config
-from src.da_utils import data_loading
+from src.da_utils import data_loading, evaluation
 from src.da_utils.output_utils import TempFolderHolder
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,9 @@ Ex_to_L_d = {
 
 
 class Evaluator:
-    def __init__(self, args_dict):
+    def __init__(self, args_dict, metric_ctp):
         self.args_dict = args_dict
+        self.metric_ctp = metric_ctp
 
         self.lib_config = dict_to_lib_config(self.args_dict)
         ModelWrapper.configurate(self.lib_config)
@@ -250,10 +252,7 @@ class Evaluator:
         else:
             model_noda = None
 
-        if "" in self.st_sample_id_d:
-            splits = [""]
-        else:
-            splits = self.splits
+        splits, _ = self._get_splits_sids()
 
         # if self.data_params.get("samp_split", False):
         #     model = ModelWrapper(self.samp_split_folder, "final_model")
@@ -454,7 +453,8 @@ class Evaluator:
 
         return np.nan
 
-    def _plot_layers(self, adata_st, adata_st_d):
+    def _color_dict_from_layers(self, adata_st):
+        """"""
         cmap = mpl.cm.get_cmap("Accent_r")
 
         color_range = list(
@@ -473,13 +473,14 @@ class Evaluator:
 
         color_dict["NA"] = "lightgrey"
 
-        self._plot_spatial(adata_st_d, color_dict, color="spatialLIBD", fname="layers.png")
+        return color_dict
 
     def _plot_spatial(self, adata_st_d, color_dict, color="spatialLIBD", fname="layers.png"):
+        splits, sids = self._get_splits_sids()
         fig, ax = plt.subplots(
             nrows=1,
-            ncols=len(self.mat_sp_d),
-            figsize=(3 * len(self.mat_sp_d), 3),
+            ncols=len(sids),
+            figsize=(3 * len(sids), 3),
             squeeze=False,
             constrained_layout=True,
             dpi=50,
@@ -490,11 +491,11 @@ class Evaluator:
                 [0],
                 marker="o",
                 color="w",
-                label=color,
-                markerfacecolor=color_dict[color],
+                label=_color,
+                markerfacecolor=color_dict[_color],
                 markersize=10,
             )
-            for color in color_dict
+            for _color in color_dict
         ]
         fig.legend(
             bbox_to_anchor=(0, 0.5),
@@ -502,29 +503,24 @@ class Evaluator:
             loc="center right",
         )
 
-        if "" in self.st_sample_id_d:
-            splits = [""]
-        else:
-            splits = self.splits
+        i = 0
         for split in splits:
-            for i, sample_id in enumerate(self.st_sample_id_d[split]):
+            for sample_id in self.st_sample_id_d[split]:
                 sc.pl.spatial(
                     adata_st_d[sample_id],
                     img_key=None,
                     color=color,
                     palette=color_dict,
                     size=1,
-                    title=sample_id,
+                    title=f"{split}: {sample_id}" if split else sample_id,
                     legend_loc=4,
                     na_color="lightgrey",
                     spot_size=1 if self.data_params.get("dset") == "pdac" else 100,
                     show=False,
                     ax=ax[0][i],
                 )
-
-            ax[0][i].axis("equal")
-            ax[0][i].set_xlabel("")
-            ax[0][i].set_ylabel("")
+                _square_and_strip(ax[0][i])
+                i += 1
 
         fig.savefig(
             os.path.join(self.results_folder, fname),
@@ -532,160 +528,6 @@ class Evaluator:
             dpi=300,
         )
         plt.close()
-
-    """
-    def _plot_samples_pdac(self, sample_id, adata_st, pred_sp, pred_sp_noda=None):
-        logging.debug(f"Plotting {sample_id}")
-
-        if self.data_params.get("sc_id") == "CA001063":
-            sc_to_st_celltype = {
-                # Peng et al., 2019: Taken together, these results show that
-                # type 2 ductal cells are the major source of malignant cells in
-                # PDACs.
-                "Ductal cell type 2": "Cancer region",
-                "T cell": "Stroma",
-                "Macrophage cell": "Stroma",
-                "Fibroblast cell": "Cancer region",
-                "B cell": "Stroma",
-                "Ductal cell type 1": "Duct epithelium",
-                "Endothelial cell": "Interstitium",
-                "Stellate cell": "Stroma",
-                "Acinar cell": "Pancreatic tissue",
-                "Endocrine cell": "Pancreatic tissue",
-            }
-        else:
-            sc_to_st_celltype = {
-                # As expected, we found that all ductal subpopulations in PDAC-A
-                # were enriched in the duct region of the tissue. In contrast,
-                # only the hypoxic and terminal ductal cell populations were
-                # significantly enriched in the cancer region
-                "Ductal - MHC Class II": "Duct epithelium",
-                "Ductal - CRISP3 high/centroacinar like": "Duct epithelium",
-                "Ductal - terminal ductal like": "Cancer region",
-                "Ductal - APOL1 high/hypoxic": "Cancer region",
-                "Cancer clone": "Cancer region",
-                "mDCs": "Stroma",
-                "Macrophages": "Stroma",
-                "T cells & NK cells": "Stroma",
-                "Tuft cells": "Duct epithelium",
-                "Monocytes": "Stroma",
-                #'RBCs': 15,
-                "Mast cells": "Stroma",
-                "Acinar cells": "Pancreatic tissue",
-                "Endocrine cells": "Pancreatic tissue",
-                "pDCs": "Stroma",
-                "Endothelial cells": "Interstitium",
-            }
-
-        celltypes = list(sc_to_st_celltype.keys()) + ["Other"]
-        n_celltypes = len(celltypes)
-        n_rows = int(math.ceil(n_celltypes / 5))
-
-        numlist = [self.sc_sub_dict2.get(t) for t in celltypes[:-1]]
-        numlist.append([v for k, v in self.sc_sub_dict2.items() if k not in celltypes[:-1]])
-        # cluster_assignments = [
-        #     "Cancer region",
-        #     "Pancreatic tissue",
-        #     "Interstitium",
-        #     "Duct epithelium",
-        #     "Stroma",
-        # ]
-        logging.debug(f"Plotting Cell Fractions")
-        fig, ax = plt.subplots(n_rows, 5, figsize=(20, 4 * n_rows), constrained_layout=True, dpi=10)
-        for i, num in enumerate(numlist):
-            self._plot_cellfraction(num, adata_st, pred_sp, ax.flat[i])
-            ax.flat[i].axis("equal")
-            ax.flat[i].set_xlabel("")
-            ax.flat[i].set_ylabel("")
-        for i in range(n_celltypes, n_rows * 5):
-            ax.flat[i].axis("off")
-        fig.suptitle(sample_id)
-
-        logging.debug(f"Saving Cell Fractions Figure")
-        fig.savefig(
-            os.path.join(self.results_folder, f"{sample_id}_cellfraction.png"),
-            bbox_inches="tight",
-            dpi=300,
-        )
-        plt.close()
-
-        logging.debug(f"Plotting ROC")
-
-        st_to_sc_celltype = {}
-        for k, v in sc_to_st_celltype.items():
-            if v not in st_to_sc_celltype:
-                st_to_sc_celltype[v] = set()
-            st_to_sc_celltype[v].add(k)
-
-        n_rows = int(math.ceil(len(sc_to_st_celltype) / 5))
-        fig, ax = plt.subplots(
-            n_rows,
-            5,
-            figsize=(20, 4 * n_rows),
-            constrained_layout=True,
-            sharex=True,
-            sharey=True,
-            dpi=10,
-        )
-
-        da_aucs = []
-        if self.pretraining:
-            noda_aucs = []
-        for i, num in enumerate(numlist[:-1]):
-            da_aucs.append(
-                self._plot_roc_pdac(
-                    num,
-                    adata_st,
-                    pred_sp,
-                    self.args_dict['modelname'],
-                    st_to_sc_celltype,
-                    ax.flat[i],
-                )
-            )
-            if self.pretraining:
-                noda_aucs.append(
-                    self._plot_roc_pdac(
-                        num,
-                        adata_st,
-                        pred_sp_noda,
-                        f"{self.args_dict['modelname']}_wo_da",
-                        st_to_sc_celltype,
-                        ax.flat[i],
-                    )
-                )
-
-            ax.flat[i].plot([0, 1], [0, 1], transform=ax.flat[i].transAxes, ls="--", color="k")
-            ax.flat[i].set_aspect("equal")
-            ax.flat[i].set_xlim([0, 1])
-            ax.flat[i].set_ylim([0, 1])
-            try:
-                cell_name = self.sc_sub_dict[num]
-            except TypeError:
-                cell_name = "Other"
-            ax.flat[i].set_title(cell_name)
-
-            if i >= len(numlist) - 5:
-                ax.flat[i].set_xlabel("FPR")
-            else:
-                ax.flat[i].set_xlabel("")
-            if i % 5 == 0:
-                ax.flat[i].set_ylabel("TPR")
-            else:
-                ax.flat[i].set_ylabel("")
-        for i in range(len(numlist[:-1]), n_rows * 5):
-            ax.flat[i].axis("off")
-        fig.suptitle(sample_id)
-
-        logging.debug(f"Saving ROC Figure")
-        fig.savefig(
-            os.path.join(self.results_folder, f"{sample_id}_roc.png"),
-            bbox_inches="tight",
-            dpi=300,
-        )
-        plt.close()
-
-        return np.nanmean(da_aucs), np.nanmean(noda_aucs) if self.pretraining else None
-    """
 
     def _plot_samples_pdac(self, sample_id, adata_st, pred_sp, pred_sp_noda=None):
         logging.debug(f"Plotting {sample_id}")
@@ -943,16 +785,114 @@ class Evaluator:
 
         return np.nanmean(da_aucs), np.nanmean(noda_aucs) if self.pretraining else None
 
+    def _plot_ax_scatterpie(self, xs, ys, dists, **kwargs):
+        for x, y, dist in zip(xs, ys, dists):
+            evaluation.draw_pie(x, y, dist, **kwargs)
+
+    def _plot_spatial_scatterpie(
+        self,
+        adata_st_d,
+        pred_sp_d,
+        pred_sp_noda_d,
+        color_dict,
+        color="relative_spot_composition",
+        fname="st_cell_types.png",
+    ):
+        splits, sids = self._get_splits_sids()
+
+        cell_type_index = [self.sc_sub_dict[i] for i in range(len(self.sc_sub_dict))]
+
+        nrows = 2 if pred_sp_noda_d is None else 3
+        fig = plt.figure(
+            figsize=(3 * len(sids), 3 * nrows),
+            constrained_layout=True,
+            dpi=50,
+        )
+        subfigs = fig.subfigures(nrows=nrows, ncols=1)
+        axs = [subfig.subplots(nrows=1, ncols=len(sids)) for subfig in subfigs]
+
+        legend_elements = [
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                label=cell_type,
+                markerfacecolor=color_dict[cell_type],
+                markersize=10,
+            )
+            for cell_type in cell_type_index
+        ]
+        fig.legend(
+            bbox_to_anchor=(0, 0.5),
+            handles=legend_elements,
+            loc="center right",
+        )
+
+        subfigs[0].suptitle("Ground Truth")
+        if pred_sp_noda_d is not None:
+            subfigs[1].suptitle(f"{self.args_dict['modelname']}_wo_da")
+        subfigs[-1].suptitle(self.args_dict["modelname"])
+
+        st_cell_types_to_sc = {re.sub("( |\/)", ".", name): name for name in cell_type_index}
+        colors = [color_dict[name] for name in cell_type_index]
+
+        ctps = OrderedDict([(sid, [None, None]) for sid in sids])
+
+        i = 0
+        for split in splits:
+            for sample_id in self.st_sample_id_d[split]:
+                dists_true = (
+                    adata_st_d[sample_id]
+                    .obsm[color]
+                    .rename(columns=st_cell_types_to_sc)
+                    .reindex(columns=cell_type_index)
+                    .to_numpy()
+                )
+                sp_kws = dict(
+                    xs=adata_st_d[sample_id].obs["X"].to_numpy(),
+                    ys=adata_st_d[sample_id].obs["Y"].to_numpy(),
+                    colors=colors,
+                    s=1000,
+                )
+
+                self._plot_ax_scatterpie(dists=dists_true, ax=axs[0][i], **sp_kws)
+                axs[0][i].set_title(f"{split}: {sample_id}" if split else sample_id)
+                _square_and_strip(axs[0][i])
+
+                if pred_sp_noda_d is not None:
+                    self._plot_ax_scatterpie(
+                        dists=pred_sp_noda_d[sample_id], ax=axs[1][i], **sp_kws
+                    )
+
+                    ctps[sample_id][1] = self.metric_ctp(pred_sp_noda_d[sample_id], dists_true)
+                    axs[1][i].set_title(f"JSD: {ctps[sample_id][1]}")
+                    _square_and_strip(axs[1][i])
+
+                self._plot_ax_scatterpie(dists=pred_sp_d[sample_id], ax=axs[-1][i], **sp_kws)
+
+                ctps[sample_id][0] = self.metric_ctp(pred_sp_d[sample_id], dists_true)
+                axs[-1][i].set_title(f"JSD: {ctps[sample_id][0]}")
+                _square_and_strip(axs[-1][i])
+
+                i += 1
+
+        fig.savefig(
+            os.path.join(self.results_folder, fname),
+            bbox_inches="tight",
+            dpi=300,
+        )
+        plt.close()
+
+        return [ctps[sid] for sid in sids]
+
     # %%
     def eval_spots(self):
+        """Evaluates spots."""
+
+        _, sids = self._get_splits_sids()
+
         print("Getting predictions: ")
-        if "" in self.st_sample_id_d:
-            splits = [""]
-        else:
-            splits = self.splits
-
-        sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
-
         # if self.data_params.get("samp_split", False):
         #     path = self.samp_split_folder
         if self.data_params["train_using_all_st_samples"]:
@@ -977,19 +917,27 @@ class Evaluator:
             pred_sp_noda_d = dict(zip(sids, outputs))
         else:
             pred_sp_noda_d = None
+
         # %%
+        print("Loading ST adata: ")
+
         adata_st = sc.read_h5ad(os.path.join(self.selected_dir, "st.h5ad"))
 
         adata_st_d = {}
-        print("Loading ST adata: ")
+
+        # Get samples and coordinates
         for sample_id in sids:
             adata_st_d[sample_id] = adata_st[adata_st.obs.sample_id == sample_id]
             adata_st_d[sample_id].obsm["spatial"] = adata_st_d[sample_id].obs[["X", "Y"]].values
+
         realspots_d = {"da": {}}
         if self.pretraining:
             realspots_d["noda"] = {}
+
         if self.data_params.get("dset") == "pdac":
             aucs = self.eval_pdac_spots(pred_sp_d, pred_sp_noda_d, adata_st_d)
+        elif "spotless" in self.data_params.get("sc_id"):
+            aucs = self.eval_spotless_gs_spots(pred_sp_d, pred_sp_noda_d, adata_st_d)
         else:
             aucs = self.eval_dlpfc_spots(pred_sp_d, pred_sp_noda_d, adata_st, adata_st_d)
 
@@ -1000,14 +948,11 @@ class Evaluator:
         self.realspots_d = realspots_d
 
     def eval_dlpfc_spots(self, pred_sp_d, pred_sp_noda_d, adata_st, adata_st_d):
-        if "" in self.st_sample_id_d:
-            splits = [""]
-        else:
-            splits = self.splits
+        _, sids = self._get_splits_sids()
 
-        sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
+        color_dict = self._color_dict_from_layers(adata_st)
 
-        self._plot_layers(adata_st, adata_st_d)
+        self._plot_spatial(adata_st_d, color_dict, color="spatialLIBD", fname="layers.png")
 
         print("Plotting Samples")
         n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(sids))
@@ -1018,6 +963,9 @@ class Evaluator:
         return aucs
 
     def eval_pdac_spots(self, pred_sp_d, pred_sp_noda_d, adata_st_d):
+        _, sids = self._get_splits_sids()
+
+        ## get colour codes
         raw_pdac_dir = os.path.join(self.data_params["data_dir"], "pdac", "st_adata")
         ctr_fname = f"{self.data_params['st_id']}-cluster_to_rgb.pkl"
         with open(os.path.join(raw_pdac_dir, ctr_fname), "rb") as f:
@@ -1026,12 +974,6 @@ class Evaluator:
         self._plot_spatial(
             adata_st_d, cluster_to_rgb, color="cell_subclass", fname="st_cell_types.png"
         )
-        if "" in self.st_sample_id_d:
-            splits = [""]
-        else:
-            splits = self.splits
-
-        sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
 
         print("Plotting Samples")
         n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(sids))
@@ -1059,7 +1001,36 @@ class Evaluator:
             )
         return aucs
 
-    def eval_sc(self, metric_ctp):
+    def eval_spotless_gs_spots(self, pred_sp_d, pred_sp_noda_d, adata_st_d):
+        # get colour codes
+        cell_type_index = [self.sc_sub_dict[i] for i in range(len(self.sc_sub_dict))]
+        cmap = mpl.cm.get_cmap("viridis")
+        color_range = list(
+            np.linspace(
+                0.125,
+                1,
+                len(cell_type_index),
+                endpoint=True,
+            )
+        )
+        colors = [cmap(x) for x in color_range]
+
+        color_dict = {}
+        for cat, color in zip(cell_type_index, colors):
+            color_dict[cat] = color
+
+        ctps = self._plot_spatial_scatterpie(
+            adata_st_d,
+            pred_sp_d,
+            pred_sp_noda_d,
+            color_dict,
+            color="relative_spot_composition",
+            fname="st_cell_types.png",
+        )
+
+        return ctps
+
+    def eval_sc(self):
         self.jsd_d = {"da": {}}
         if self.pretraining:
             self.jsd_d["noda"] = {}
@@ -1067,16 +1038,12 @@ class Evaluator:
         for k in self.jsd_d:
             self.jsd_d[k] = {split: {} for split in self.splits}
 
-        if "" in self.st_sample_id_d:
-            sids = self.st_sample_id_d[""]
-        else:
-            sids = [sid for split in self.splits for sid in self.st_sample_id_d[split]]
+        _, sids = self._get_splits_sids()
 
         if self.pretraining:
             model = ModelWrapper(self.pretrain_folder)
 
             self._calc_jsd(
-                metric_ctp,
                 sids[0],
                 model=model,
                 da="noda",
@@ -1096,15 +1063,15 @@ class Evaluator:
         for sample_id in sids:
             if model is None:
                 model_samp = ModelWrapper(os.path.join(self.advtrain_folder, sample_id))
-                self._calc_jsd(metric_ctp, sample_id, model=model_samp, da="da")
+                self._calc_jsd(sample_id, model=model_samp, da="da")
             else:
-                self._calc_jsd(metric_ctp, sample_id, model=model, da="da")
+                self._calc_jsd(sample_id, model=model, da="da")
 
-    def _calc_jsd(self, metric_ctp, sample_id, model=None, da="da"):
+    def _calc_jsd(self, sample_id, model=None, da="da"):
         for split in self.splits:
             input = self.sc_mix_d[split]
             pred = model.get_predictions(input, source_encoder=True)
-            score = metric_ctp(pred, self.lab_mix_d[split])
+            score = self.metric_ctp(pred, self.lab_mix_d[split])
 
             self.jsd_d[da][split][sample_id] = score
 
@@ -1126,6 +1093,8 @@ class Evaluator:
     def produce_results(self):
         if self.data_params.get("dset") == "pdac":
             real_spot_header = "Real Spots (Mean AUC celltype)"
+        elif "spotless" in self.data_params.get("sc_id"):
+            real_spot_header = "Real Spots (JSD)"
         else:
             real_spot_header = "Real Spots (Mean AUC Ex1-10)"
 
@@ -1162,6 +1131,15 @@ class Evaluator:
             yaml.dump(self.config, f)
 
         self.temp_folder_holder.copy_out()
+
+    def _get_splits_sids(self):
+        if "" in self.st_sample_id_d:
+            splits = [""]
+        else:
+            splits = self.splits
+
+        sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
+        return splits, sids
 
 
 def iter_preds(inputs, model_dir, name="final_model", source_encoder=False):
@@ -1254,3 +1232,9 @@ def listify(inputs):
 
 def fit_pca(X, *args, **kwargs):
     return PCA(*args, **kwargs).fit(X)
+
+
+def _square_and_strip(ax):
+    ax.axis("equal")
+    ax.set_xlabel("")
+    ax.set_ylabel("")

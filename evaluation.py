@@ -1,7 +1,46 @@
 """Evaluation tools"""
 import itertools
 
+import matplotlib.pyplot as plt
 import numpy as np
+
+
+def draw_pie(xpos, ypos, dist, colors=None, ax=None, **kwargs):
+    """Draw a pie chart at position `xpos`, `ypos` with distribution `dist`.
+
+    Args:
+        xpos (float): x position
+        ypos (float): y position
+        dist (list): list of values to be pie charted
+        colors (list): list of colors for each pie slice
+        ax (matplotlib.axes.Axes): axes to draw on
+        **kwargs: keyword arguments to pass to `ax.scatter`
+
+    Returns:
+        matplotlib.axes.Axes: axes with pie chart drawn
+
+    """
+
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    # for incremental pie slices
+    cumsum = np.cumsum(dist)
+    cumsum = cumsum / cumsum[-1]
+    pie = [0] + cumsum.tolist()
+
+    if colors is None:
+        colors = itertools.repeat(None, len(dist))
+    for r1, r2, facecolor in zip(pie[:-1], pie[1:], colors):
+        angles = np.linspace(2 * np.pi * r1, 2 * np.pi * r2)
+        x = [0] + np.cos(angles).tolist()
+        y = [0] + np.sin(angles).tolist()
+
+        xy = np.column_stack([x, y])
+
+        ax.scatter([xpos], [ypos], marker=xy, facecolor=facecolor, **kwargs)
+
+    return ax
 
 
 def recurse_mean_dict(d, d_mean):
