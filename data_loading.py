@@ -3,6 +3,7 @@ import os
 import pickle
 
 import h5py
+import scanpy as sc
 
 DEFAULT_N_SPOTS = 200000
 DEFAULT_N_MARKERS = 20
@@ -137,124 +138,97 @@ def load_spatial(selected_dir, scaler_name, **kwargs):
     Args:
         selected_dir (str): Directory of selected data.
         scaler_name (str): Name of the scaler to use.
-        train_using_all_st_samples (bool): Whether to use all spatial samples
-            for training, or separate by sample.
         st_split (bool): Whether to use a train/val/test split for spatial data.
         samp_split (bool): Whether to use a train/val/test split by slice.
+        one_model (bool): Whether to use all spatial samples
+            for training, or separate by sample. Default: False.
         **kwargs: Catches additional unused arguments. Passed to
             `load_st_spots`.
 
     Returns:
         Tuple::
 
-            (`mat_sp_d`, `mat_sp_train`, `st_sample_id_l`)
+            (`mat_sp_d`, `mat_sp_meta_d`, `st_sample_id_l`)
 
 
         `mat_sp_d` is a dict of spatial data by sample and split. If not
         `st_split`, then 'val' will not be contained and 'test' will point to
         'train'.
 
-        `mat_sp_train` is a numpy array of all spatial data together for
-        training; None if not `train_using_all_st_samples`.
+        `mat_sp_meta_d` dict matching the format of `mat_sp_d`, containing
+        dataframes of the metadata for each sample/subsample.
+
 
         `st_sample_id_l` is a list of sample ids for spatial data.
 
     """
     processed_data_dir = os.path.join(selected_dir, scaler_name)
 
-    mat_sp_d, mat_sp_train = load_st_spots(processed_data_dir, **kwargs)
+    mat_sp_d, mat_sp_meta_d = load_st_spots(processed_data_dir, **kwargs)
     st_sample_id_l = load_st_sample_names(selected_dir)
 
-    return mat_sp_d, mat_sp_train, st_sample_id_l
+    return mat_sp_d, mat_sp_meta_d, st_sample_id_l
 
 
 def load_st_spots(
     processed_data_dir,
-    train_using_all_st_samples=False,
     st_split=False,
     samp_split=False,
+    one_model=False,
     **kwargs,
 ):
     """Loads spatial spots.
 
     Args:
         processed_data_dir (str): Directory to load data from.
-        train_using_all_st_samples (bool): Whether to use all spatial samples
-            for training, or separate by sample.
         st_split (bool): Whether to use a train/val/test split for spatial data.
         samp_split (bool): Whether to use a train/val/test split by slice.
+        one_model (bool): Whether to use all spatial samples
+            for training, or separate by sample. Default: False.
         **kwargs: Catches additional unused arguments.
 
     Returns:
         Tuple::
 
-            (`mat_sp_d`, `mat_sp_train`)
+            (`mat_sp_d`, `mat_sp_meta_d`)
 
 
         `mat_sp_d` is a dict of spatial data by sample and split. If not
         `st_split`, then 'val' will not be contained and 'test' will point to
         'train'.
 
-        `mat_sp_train` is a numpy array of all spatial data together for
-        training; None if not `train_using_all_st_samples`.
+        `mat_sp_meta_d` dict matching the format of `mat_sp_d`, containing
+        dataframes of the metadata for each sample/subsample.
 
 
     """
     if samp_split:
-        fname = "mat_sp_samp_split_d.hdf5"
+        fname = "mat_sp_samp_split_d.h5ad"
     elif st_split:
-        fname = "mat_sp_split_d.hdf5"
+        if one_model:
+            fname = "mat_sp_split_d_one_model.h5ad"
+        else:
+            fname = "mat_sp_split_d.h5ad"
     else:
-        fname = "mat_sp_train_d.hdf5"
+        if one_model:
+            fname = "mat_sp_train_d_one_model.h5ad"
+        else:
+            fname = "mat_sp_train_d.h5ad"
 
     in_path = os.path.join(processed_data_dir, fname)
-
+    adata = sc.read_h5ad(in_path)
     mat_sp_d = {}
-    with h5py.File(in_path, "r") as f:
-        for l1 in f:
-            mat_sp_d[l1] = {}
-            for l2 in f[l1]:
-                mat_sp_d[l1][l2] = f[f"{l1}/{l2}"][()]
-            if not st_split and not samp_split:
-                mat_sp_d[l1]["test"] = mat_sp_d[l1]["train"]
-        # for sample_id in f:
-        #     mat_sp_d[sample_id] = {}
-        #     mat_sp_d[sample_id]["train"] = f[f"{sample_id}/train"][()]
-        #     if st_split:
-        #         mat_sp_d[sample_id]["val"] = f[f"{sample_id}/val"][()]
-        #         mat_sp_d[sample_id]["test"] = f[f"{sample_id}/test"][()]
-        #     else:
-        #         mat_sp_d[sample_id]["test"] = mat_sp_d[sample_id]["train"]
+    mat_sp_meta_d = {}
+    for l1 in adata.obs.iloc[:, 0].unique():
+        mat_sp_d[l1] = {}
+        for l2 in adata.obs.iloc[:, 1].unique():
+            sub_samp = adata[adata.obs.iloc[:, 0] == l1 and adata.obs.iloc[:, 0] == l2]
+            mat_sp_d[l1][l2] = sub_samp.X
+            mat_sp_meta_d[l1][l2] = sub_samp.obs
+        if not st_split and not samp_split:
+            mat_sp_d[l1]["test"] = mat_sp_d[l1]["train"]
 
-    mat_sp_train = None
-    if train_using_all_st_samples:
-        with h5py.File(os.path.join(processed_data_dir, "mat_sp_train_s.hdf5"), "r") as f:
-            mat_sp_train = f["all"][()]
-
-    return mat_sp_d, mat_sp_train
-
-
-def save_st_spots(mat_sp_d, processed_data_dir, stsplit=False):
-    """Saves spatial data to hdf5 files.
-
-    Args:
-        mat_sp_d (dict): Spatial data nested by sample then split
-        processed_data_dir (str): Directory to save data to.
-        stsplit (bool): Whether to use a train/val/test split for spatial data.
-            Default: False.
-
-    """
-    fname = f"mat_sp_{'split' if stsplit else 'train'}_d.hdf5"
-    out_path = os.path.join(processed_data_dir, fname)
-
-    with h5py.File(out_path, "w") as f:
-        for sample_id in mat_sp_d:
-            grp_samp = f.create_group(sample_id)
-            if stsplit:
-                for split in mat_sp_d[sample_id]:
-                    grp_samp.create_dataset(split, data=mat_sp_d[sample_id][split])
-            else:
-                grp_samp.create_dataset("train", data=mat_sp_d[sample_id]["train"])
+    return mat_sp_d, mat_sp_meta_d
 
 
 def load_st_sample_names(selected_dir):

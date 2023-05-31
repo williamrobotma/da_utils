@@ -128,7 +128,7 @@ class Evaluator:
 
         print("Loading Data")
         # Load spatial data
-        mat_sp_d, self.mat_sp_train, st_sample_id_l = data_loading.load_spatial(
+        mat_sp_d, self.mat_sp_meta_d, st_sample_id_l = data_loading.load_spatial(
             self.selected_dir,
             **self.data_params,
         )
@@ -262,7 +262,7 @@ class Evaluator:
 
         if self.data_params.get("samp_split", False):
             model = ModelWrapper(self.samp_split_folder, "final_model")
-        elif self.data_params.get("train_using_all_st_samples", False):
+        elif self.data_params.get("one_model", False):
             model = ModelWrapper(self.advtrain_folder, "final_model")
         else:
             model = None
@@ -1007,7 +1007,7 @@ class Evaluator:
         print("Getting predictions: ")
         if self.data_params.get("samp_split", False):
             path = self.samp_split_folder
-        elif self.data_params["train_using_all_st_samples"]:
+        elif self.data_params.get("one_model", False):
             path = self.advtrain_folder
         else:
             path = None
@@ -1147,7 +1147,7 @@ class Evaluator:
 
         if self.data_params.get("samp_split", False):
             model = ModelWrapper(self.samp_split_folder)
-        elif self.data_params["train_using_all_st_samples"]:
+        elif self.data_params.get("one_model", False):
             model = ModelWrapper(self.advtrain_folder)
         else:
             model = None
