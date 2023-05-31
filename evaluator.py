@@ -1,12 +1,13 @@
 """Evaluator for models."""
 # %%
+import itertools
 import logging
 import math
 import os
 import pickle
 import re
 import shutil
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict, defaultdict
 
 import harmonypy as hm
 import matplotlib as mpl
@@ -26,6 +27,11 @@ from sklearn.metrics import RocCurveDisplay
 from src.da_models.model_utils.utils import ModelWrapper, dict_to_lib_config
 from src.da_utils import data_loading, evaluation
 from src.da_utils.output_utils import TempFolderHolder
+from src.da_utils.scripts.data.preprocessing_mouse_GSE115746 import (
+    cell_cluster_cell_type_to_spot_composition,
+    cell_subclass_to_spot_composition,
+)
+from src.da_utils.scripts.data.preprocessing_spotless import get_st_sub_map
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +164,7 @@ class Evaluator:
 
         self.pretrain_folder = os.path.join(model_folder, "pretrain")
         self.advtrain_folder = os.path.join(model_folder, "advtrain")
-        # self.samp_split_folder = os.path.join(self.advtrain_folder, "samp_split")
+        self.samp_split_folder = os.path.join(self.advtrain_folder, "samp_split")
         # self.pretrain_model_path = os.path.join(pretrain_folder, f"final_model.pth")
 
     def gen_pca(self, sample_id, split, y_dis, emb, emb_noda=None):
@@ -254,9 +260,9 @@ class Evaluator:
 
         splits, _ = self._get_splits_sids()
 
-        # if self.data_params.get("samp_split", False):
-        #     model = ModelWrapper(self.samp_split_folder, "final_model")
-        if self.data_params.get("train_using_all_st_samples", False):
+        if self.data_params.get("samp_split", False):
+            model = ModelWrapper(self.samp_split_folder, "final_model")
+        elif self.data_params.get("train_using_all_st_samples", False):
             model = ModelWrapper(self.advtrain_folder, "final_model")
         else:
             model = None
@@ -279,9 +285,21 @@ class Evaluator:
         for split, rs in zip(self.splits, random_states):
             print(split.upper(), end=" |")
             Xs, Xt = (self.sc_mix_d[split], self.mat_sp_d[sample_id])
+
+            logger.debug(f"Xs: {Xs.min()}, {Xs.max()} hasnan {np.isnan(Xs).any()}")
+            logger.debug(f"Xt: {Xt.min()}, {Xt.max()} hasnan {np.isnan(Xt).any()}")
+            logger.debug(f"Xs: {Xs[31416 // 64]}")
             logger.debug("Getting embeddings")
             source_emb = model.get_embeddings(Xs, source_encoder=True)
             target_emb = model.get_embeddings(Xt, source_encoder=False)
+            logger.debug(
+                f"source_emb_min_max: {source_emb.min()}, {source_emb.argmax()} hasnan {np.isnan(source_emb).any()}"
+            )
+            logger.debug(
+                f"target_emb_min_max: {target_emb.min()}, {target_emb.max()} hasnan {np.isnan(target_emb).any()}"
+            )
+            logger.debug(f"source_emb: {source_emb[31416 // 64]}")
+            # logger.debug(f"encoder: {repr(model.model.encoder)}")
             emb = np.concatenate([source_emb, target_emb])
             if self.pretraining:
                 source_emb_noda = model_noda.get_embeddings(Xs, source_encoder=True)
@@ -298,11 +316,35 @@ class Evaluator:
                 ]
             )
 
-            self.gen_pca(sample_id, split, y_dis, emb, emb_noda=emb_noda)
+            if self.pretraining:
+                all_embs = np.concatenate([emb, emb_noda], axis=1)
+            else:
+                all_embs = emb
 
+            # undersample majority class between source and target for milisi, pca
+            all_embs_bal, y_dis_bal = RandomUnderSampler(
+                random_state=int.from_bytes(sample_id.encode("utf8"), "big") % 2**32
+            ).fit_resample(all_embs, y_dis)
+
+            if self.pretraining:
+                emb_bal = all_embs_bal[:, : all_embs_bal.shape[1] // 2]
+                emb_noda_bal = all_embs_bal[:, all_embs_bal.shape[1] // 2 :]
+            else:
+                emb_bal = all_embs_bal
+                emb_noda_bal = None
+
+            # pca
+            self.gen_pca(sample_id, split, y_dis_bal, emb_bal, emb_noda=emb_noda_bal)
+
+            # milisi
             if self.args_dict["milisi"]:
-                self._run_milisi(sample_id, n_jobs, split, emb, emb_noda, y_dis)
+                if "spotless" in self.data_params.get("st_id", set()):
+                    self.milisi_perplexity = 5
+                else:
+                    self.milisi_perplexity = 30
+                self._run_milisi(sample_id, n_jobs, split, emb_bal, emb_noda_bal, y_dis_bal)
 
+            # rf50
             print("rf50", end=" ")
             if self.pretraining:
                 embs = (emb, emb_noda)
@@ -338,38 +380,27 @@ class Evaluator:
     def _run_milisi(self, sample_id, n_jobs, split, emb, emb_noda, y_dis):
         logger.debug(f"Using {n_jobs} jobs with parallel backend \"{'threading'}\"")
 
-        if self.pretraining:
-            all_embs = np.concatenate([emb, emb_noda], axis=1)
-        else:
-            all_embs = emb
-
-        all_embs_bal, y_dis_bal = RandomUnderSampler(
-            random_state=int.from_bytes(sample_id.encode("utf8"), "big") % 2**32
-        ).fit_resample(all_embs, y_dis)
-
-        if self.pretraining:
-            emb_bal = all_embs_bal[:, : all_embs_bal.shape[1] // 2]
-            emb_noda_bal = all_embs_bal[:, all_embs_bal.shape[1] // 2 :]
-        else:
-            emb_bal = all_embs_bal
-            emb_noda_bal = None
-
         print(" milisi", end=" ")
-        meta_df = pd.DataFrame(y_dis_bal, columns=["Domain"])
-        score = self._milisi_parallel(n_jobs, emb_bal, meta_df)
+        meta_df = pd.DataFrame(y_dis, columns=["Domain"])
+        score = self._milisi_parallel(n_jobs, emb, meta_df)
 
         self.miLISI_d["da"][split][sample_id] = np.median(score)
         logger.debug(f"miLISI da: {self.miLISI_d['da'][split][sample_id]}")
 
         if self.pretraining:
-            score = self._milisi_parallel(n_jobs, emb_noda_bal, meta_df)
+            score = self._milisi_parallel(n_jobs, emb_noda, meta_df)
             self.miLISI_d["noda"][split][sample_id] = np.median(score)
             logger.debug(f"miLISI noda: {self.miLISI_d['da'][split][sample_id]}")
 
     def _milisi_parallel(self, n_jobs, emb, meta_df):
         if n_jobs > 1:
             with parallel_backend("threading", n_jobs=n_jobs):
-                return hm.compute_lisi(emb, meta_df, ["Domain"])
+                return hm.compute_lisi(
+                    emb,
+                    meta_df,
+                    ["Domain"],
+                    perplexity=self.milisi_perplexity,
+                )
 
         return hm.compute_lisi(emb, meta_df, ["Domain"])
 
@@ -379,7 +410,7 @@ class Evaluator:
             cell_name = self.sc_sub_dict[visnum]
         except TypeError:
             cell_name = "Other"
-        logging.debug(f"plotting cell fraction for {cell_name}")
+        logger.debug(f"plotting cell fraction for {cell_name}")
         y_pred = pred_sp[:, visnum].squeeze()
         if y_pred.ndim > 1:
             y_pred = y_pred.sum(axis=1)
@@ -439,13 +470,13 @@ class Evaluator:
             cell_name = "Other"
         logging.debug(f"plotting ROC for {cell_name} and {name}")
 
-        def st_sc_bin(cell_subclass):
-            return int(cell_subclass in sc_to_st_celltype.get(cell_name, set()))
+        def st_sc_bin(cell_type):
+            return int(cell_type in sc_to_st_celltype.get(cell_name, set()))
 
         y_pred = pred_sp[:, visnum].squeeze()
         if y_pred.ndim > 1:
             y_pred = y_pred.sum(axis=1)
-        y_true = adata.obs["cell_subclass"].map(st_sc_bin).fillna(0)
+        y_true = adata.obs["cell_type"].map(st_sc_bin).fillna(0)
 
         if y_true.sum() > 0:
             RocCurveDisplay.from_predictions(y_true=y_true, y_pred=y_pred, name=name, ax=ax)
@@ -794,15 +825,64 @@ class Evaluator:
         adata_st_d,
         pred_sp_d,
         pred_sp_noda_d,
-        color_dict,
-        color="relative_spot_composition",
+        hue="relative_spot_composition",
         fname="st_cell_types.png",
     ):
+        if (
+            self.data_params.get("sc_id") == "GSE115746"
+            and self.data_params.get("st_id") == "spotless_mouse_cortex"
+        ):
+            st_sub_map = get_st_sub_map()
+            cell_type_index = sorted(list(st_sub_map.keys())) + ["Other"]
+            # for spot_comp in adata_st_d[sids[0]].obsm[hue].columns:
+            #     if spot_comp in st_cell_types_to_sc:
+            #         cell_type_index.append(st_cell_types_to_sc[spot_comp])
+            #     else:
+            #         cell_type_index.append(spot_comp)
+
+            # create a mapping from spotless cell types to sc cell types
+            merged_to_sc = {k: [] for k in cell_type_index}
+
+            for k, v in itertools.chain(
+                cell_cluster_cell_type_to_spot_composition.items(),
+                cell_subclass_to_spot_composition.items(),
+            ):
+                if k != "keep_the_rest":
+                    if len(v) > 0:
+                        merged_to_sc["/".join(sorted(list(v)))].append(k)
+                    else:
+                        merged_to_sc["Other"].append(k)
+
+            new_pred_sp_d = self._merge_sc_preds(pred_sp_d, cell_type_index, merged_to_sc)
+            new_pred_sp_noda_d = (
+                self._merge_sc_preds(pred_sp_noda_d, cell_type_index, merged_to_sc)
+                if pred_sp_noda_d is not None
+                else None
+            )
+        else:
+            cell_type_index = [self.sc_sub_dict[i] for i in range(len(self.sc_sub_dict))]
+            new_pred_sp_d = pred_sp_d
+            new_pred_sp_noda_d = pred_sp_noda_d
+
+        # get colour codes
+        cmap = mpl.cm.get_cmap("viridis")
+        color_range = list(
+            np.linspace(
+                0.125,
+                1,
+                len(cell_type_index),
+                endpoint=True,
+            )
+        )
+        colors = [cmap(x) for x in color_range]
+
+        color_dict = {}
+        for cat, color in zip(cell_type_index, colors):
+            color_dict[cat] = color
         splits, sids = self._get_splits_sids()
 
-        cell_type_index = [self.sc_sub_dict[i] for i in range(len(self.sc_sub_dict))]
-
-        nrows = 2 if pred_sp_noda_d is None else 3
+        # create figure
+        nrows = 2 if new_pred_sp_noda_d is None else 3
         fig = plt.figure(
             figsize=(3 * len(sids), 3 * nrows),
             constrained_layout=True,
@@ -830,11 +910,16 @@ class Evaluator:
         )
 
         subfigs[0].suptitle("Ground Truth")
-        if pred_sp_noda_d is not None:
+        if new_pred_sp_noda_d is not None:
             subfigs[1].suptitle(f"{self.args_dict['modelname']}_wo_da")
         subfigs[-1].suptitle(self.args_dict["modelname"])
 
         st_cell_types_to_sc = {re.sub("( |\/)", ".", name): name for name in cell_type_index}
+
+        # print(st_cell_types_to_sc)
+        # print(adata_st_d[sids[0]].obsm[hue].columns)
+        # print(adata_st_d[sids[0]].obsm[hue].rename(columns=st_cell_types_to_sc).columns)
+
         colors = [color_dict[name] for name in cell_type_index]
 
         ctps = OrderedDict([(sid, [None, None]) for sid in sids])
@@ -844,9 +929,10 @@ class Evaluator:
             for sample_id in self.st_sample_id_d[split]:
                 dists_true = (
                     adata_st_d[sample_id]
-                    .obsm[color]
+                    .obsm[hue]
                     .rename(columns=st_cell_types_to_sc)
-                    .reindex(columns=cell_type_index)
+                    # this adds an "Other" column with all 0s
+                    .reindex(columns=cell_type_index, fill_value=0.0)
                     .to_numpy()
                 )
                 sp_kws = dict(
@@ -860,18 +946,24 @@ class Evaluator:
                 axs[0][i].set_title(f"{split}: {sample_id}" if split else sample_id)
                 _square_and_strip(axs[0][i])
 
-                if pred_sp_noda_d is not None:
+                if new_pred_sp_noda_d is not None:
                     self._plot_ax_scatterpie(
-                        dists=pred_sp_noda_d[sample_id], ax=axs[1][i], **sp_kws
+                        dists=new_pred_sp_noda_d[sample_id], ax=axs[1][i], **sp_kws
                     )
+                    # print(
+                    #     new_pred_sp_noda_d[sample_id].sum(axis=1),
+                    #     new_pred_sp_noda_d[sample_id].min(),
+                    #     new_pred_sp_noda_d[sample_id].max(),
+                    # )
+                    # print(dists_true.sum(axis=1), dists_true.min(), dists_true.max())
+                    ctps[sample_id][1] = self.metric_ctp(new_pred_sp_noda_d[sample_id], dists_true)
 
-                    ctps[sample_id][1] = self.metric_ctp(pred_sp_noda_d[sample_id], dists_true)
                     axs[1][i].set_title(f"JSD: {ctps[sample_id][1]}")
                     _square_and_strip(axs[1][i])
 
-                self._plot_ax_scatterpie(dists=pred_sp_d[sample_id], ax=axs[-1][i], **sp_kws)
-
-                ctps[sample_id][0] = self.metric_ctp(pred_sp_d[sample_id], dists_true)
+                self._plot_ax_scatterpie(dists=new_pred_sp_d[sample_id], ax=axs[-1][i], **sp_kws)
+                # assert new_pred_sp_d[sample_id].shape == dists_true.shape
+                ctps[sample_id][0] = self.metric_ctp(new_pred_sp_d[sample_id], dists_true)
                 axs[-1][i].set_title(f"JSD: {ctps[sample_id][0]}")
                 _square_and_strip(axs[-1][i])
 
@@ -886,6 +978,26 @@ class Evaluator:
 
         return [ctps[sid] for sid in sids]
 
+    def _merge_sc_preds(self, pred_sp_d, cell_type_index, merged_to_sc):
+        new_pred_dict = {}
+        for sid, pred in pred_sp_d.items():
+            new_pred_dict[sid] = np.empty((pred.shape[0], len(cell_type_index)), dtype=pred.dtype)
+            for i, merged_cell_type in enumerate(cell_type_index):
+                if merged_cell_type in merged_to_sc:
+                    old_idxs = [
+                        self.sc_sub_dict2[cell_type] for cell_type in merged_to_sc[merged_cell_type]
+                    ]
+                    new_pred_dict[sid][:, i] = pred[:, old_idxs].sum(axis=1)
+                else:
+                    # no sc cell types map to this st cell type
+                    new_pred_dict[sid][:, i] = 0
+
+            # add the "other" cell type, as CR doesn't map to any spotless cell type
+            # new_pred_dict[sid][:, -1] = 1 - new_pred_dict[sid][:, :-1].sum(axis=1)
+            # put overflow into "Other"
+            # new_pred_dict[sid][:, -1] = 1.0 - new_pred_dict[sid][:, :-1].sum(axis=1)
+        return new_pred_dict
+
     # %%
     def eval_spots(self):
         """Evaluates spots."""
@@ -893,9 +1005,9 @@ class Evaluator:
         _, sids = self._get_splits_sids()
 
         print("Getting predictions: ")
-        # if self.data_params.get("samp_split", False):
-        #     path = self.samp_split_folder
-        if self.data_params["train_using_all_st_samples"]:
+        if self.data_params.get("samp_split", False):
+            path = self.samp_split_folder
+        elif self.data_params["train_using_all_st_samples"]:
             path = self.advtrain_folder
         else:
             path = None
@@ -936,7 +1048,7 @@ class Evaluator:
 
         if self.data_params.get("dset") == "pdac":
             aucs = self.eval_pdac_spots(pred_sp_d, pred_sp_noda_d, adata_st_d)
-        elif "spotless" in self.data_params.get("sc_id"):
+        elif "spotless" in self.data_params.get("st_id", set()):
             aucs = self.eval_spotless_gs_spots(pred_sp_d, pred_sp_noda_d, adata_st_d)
         else:
             aucs = self.eval_dlpfc_spots(pred_sp_d, pred_sp_noda_d, adata_st, adata_st_d)
@@ -971,9 +1083,7 @@ class Evaluator:
         with open(os.path.join(raw_pdac_dir, ctr_fname), "rb") as f:
             cluster_to_rgb = pickle.load(f)
 
-        self._plot_spatial(
-            adata_st_d, cluster_to_rgb, color="cell_subclass", fname="st_cell_types.png"
-        )
+        self._plot_spatial(adata_st_d, cluster_to_rgb, color="cell_type", fname="st_cell_types.png")
 
         print("Plotting Samples")
         n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(sids))
@@ -1002,29 +1112,11 @@ class Evaluator:
         return aucs
 
     def eval_spotless_gs_spots(self, pred_sp_d, pred_sp_noda_d, adata_st_d):
-        # get colour codes
-        cell_type_index = [self.sc_sub_dict[i] for i in range(len(self.sc_sub_dict))]
-        cmap = mpl.cm.get_cmap("viridis")
-        color_range = list(
-            np.linspace(
-                0.125,
-                1,
-                len(cell_type_index),
-                endpoint=True,
-            )
-        )
-        colors = [cmap(x) for x in color_range]
-
-        color_dict = {}
-        for cat, color in zip(cell_type_index, colors):
-            color_dict[cat] = color
-
         ctps = self._plot_spatial_scatterpie(
             adata_st_d,
             pred_sp_d,
             pred_sp_noda_d,
-            color_dict,
-            color="relative_spot_composition",
+            hue="relative_spot_composition",
             fname="st_cell_types.png",
         )
 
@@ -1053,9 +1145,9 @@ class Evaluator:
                 for sample_id in sids[1:]:
                     self.jsd_d["noda"][split][sample_id] = score
 
-        # if self.data_params.get("samp_split", False):
-        #     model = ModelWrapper(self.samp_split_folder)
-        if self.data_params["train_using_all_st_samples"]:
+        if self.data_params.get("samp_split", False):
+            model = ModelWrapper(self.samp_split_folder)
+        elif self.data_params["train_using_all_st_samples"]:
             model = ModelWrapper(self.advtrain_folder)
         else:
             model = None
@@ -1093,19 +1185,19 @@ class Evaluator:
     def produce_results(self):
         if self.data_params.get("dset") == "pdac":
             real_spot_header = "Real Spots (Mean AUC celltype)"
-        elif "spotless" in self.data_params.get("sc_id"):
-            real_spot_header = "Real Spots (JSD)"
+        elif "spotless" in self.data_params.get("st_id", set()):
+            real_spot_header = "Real Spots (Cosine Distance)"
         else:
             real_spot_header = "Real Spots (Mean AUC Ex1-10)"
 
         df_keys = [
-            "Pseudospots (JS Divergence)",
+            "Pseudospots (Cosine Distance)",
             "RF50",
             real_spot_header,
         ]
 
         if self.args_dict["milisi"]:
-            df_keys.insert(2, "miLISI")
+            df_keys.insert(2, f"miLISI (perplexity={self.milisi_perplexity})")
 
         da_dict_keys = ["da"]
         da_df_keys = ["After DA"]
@@ -1238,3 +1330,6 @@ def _square_and_strip(ax):
     ax.axis("equal")
     ax.set_xlabel("")
     ax.set_ylabel("")
+
+
+# %%

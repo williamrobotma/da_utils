@@ -96,13 +96,13 @@ def rank_genes(adata_sc):
     """Ranks genes for cell_subclasses.
 
     Args:
-        adata_sc (:obj: AnnData): Single-cell data with cell_subclass.
+        adata_sc (:obj: AnnData): Single-cell data with cell_type.
 
     Returns:
-        A DataFrame containing the ranked genes by cell_subclass.
+        A DataFrame containing the ranked genes by cell_type.
 
     """
-    sc.tl.rank_genes_groups(adata_sc, groupby="cell_subclass", method="wilcoxon")
+    sc.tl.rank_genes_groups(adata_sc, groupby="cell_type", method="wilcoxon")
 
     genelists = adata_sc.uns["rank_genes_groups"]["names"]
     df_genelists = pd.DataFrame.from_records(genelists)
@@ -121,10 +121,10 @@ def select_marker_genes(
     features in adatas.
 
     Args:
-        adata_sc (:obj: AnnData): Single-cell data with cell_subclass.
+        adata_sc (:obj: AnnData): Single-cell data with cell_type.
         adata_st (:obj: AnnData): Spatial transcriptomic data.
         n_markers (Any): Number of top markers to include for each
-            cell_subclass. If not provided, or not truthy, all genes will be
+            cell_type. If not provided, or not truthy, all genes will be
             included.
         genelists_path (Any): Path to save/load ranked genes. If not provided,
             will not save/load. Defaults to None.
@@ -134,7 +134,7 @@ def select_marker_genes(
     Returns:
         A tuple of a tuple of (adata_sc, adata_st) with the reduced set of
         marker genes, and a DataFrame containing the ranked genes by
-        cell_subclass.
+        cell_type.
 
     """
 

@@ -4,7 +4,7 @@ import pickle
 
 import h5py
 
-DEFAULT_N_SPOTS = 20000
+DEFAULT_N_SPOTS = 200000
 DEFAULT_N_MARKERS = 20
 DEFAULT_N_MIX = 8
 DEF_ST_ID = "spatialLIBD"
@@ -140,7 +140,9 @@ def load_spatial(selected_dir, scaler_name, **kwargs):
         train_using_all_st_samples (bool): Whether to use all spatial samples
             for training, or separate by sample.
         st_split (bool): Whether to use a train/val/test split for spatial data.
-        **kwargs: Catches additional unused arguments.
+        samp_split (bool): Whether to use a train/val/test split by slice.
+        **kwargs: Catches additional unused arguments. Passed to
+            `load_st_spots`.
 
     Returns:
         Tuple::
@@ -180,8 +182,8 @@ def load_st_spots(
         train_using_all_st_samples (bool): Whether to use all spatial samples
             for training, or separate by sample.
         st_split (bool): Whether to use a train/val/test split for spatial data.
-        **kwargs: Catches additional unused arguments. Passed to
-            `load_st_spots`.
+        samp_split (bool): Whether to use a train/val/test split by slice.
+        **kwargs: Catches additional unused arguments.
 
     Returns:
         Tuple::
@@ -308,14 +310,14 @@ def load_sc_dicts(selected_dir):
     return sc_sub_dict, sc_sub_dict2
 
 
-def _ps_fname(n_mix, n_spots):
-    return f"sc_{n_mix}mix_{n_spots}spots.hdf5"
+def _ps_fname(n_mix):
+    return f"sc_{n_mix}mix.hdf5"
 
 
 def load_pseudospots(
     processed_data_dir,
     n_mix=DEFAULT_N_MIX,
-    n_spots=DEFAULT_N_SPOTS,
+    n_spots=None,
     **kwargs,
 ):
     """Loads preprocessed sc pseudospots.
@@ -338,15 +340,18 @@ def load_pseudospots(
     """
     sc_mix_d = {}
     lab_mix_d = {}
-    with h5py.File(os.path.join(processed_data_dir, _ps_fname(n_mix, n_spots)), "r") as f:
+    with h5py.File(os.path.join(processed_data_dir, _ps_fname(n_mix)), "r") as f:
         for split in SPLITS:
             sc_mix_d[split] = f[f"X/{split}"][()]
             lab_mix_d[split] = f[f"y/{split}"][()]
 
+    if n_spots is not None:
+        sc_mix_d["train"] = sc_mix_d["train"][:n_spots]
+        lab_mix_d["train"] = lab_mix_d["train"][:n_spots]
     return sc_mix_d, lab_mix_d
 
 
-def save_pseudospots(lab_mix_d, sc_mix_s_d, data_dir, n_mix, n_spots):
+def save_pseudospots(lab_mix_d, sc_mix_s_d, data_dir, n_mix):
     """Saves preprocessed sc pseudospots to hdf5 files.
 
     Args:
@@ -354,10 +359,9 @@ def save_pseudospots(lab_mix_d, sc_mix_s_d, data_dir, n_mix, n_spots):
         sc_mix_s_d (dict): sc data by split.
         data_dir (str): Directory to save data to.
         n_mix (int): Number of sc samples in each spot.
-        n_spots (int): Number of spots to generate for training set.
 
     """
-    with h5py.File(os.path.join(data_dir, _ps_fname(n_mix, n_spots)), "w") as f:
+    with h5py.File(os.path.join(data_dir, _ps_fname(n_mix)), "w") as f:
         grp_x = f.create_group("X")
         grp_y = f.create_group("y")
         for split in SPLITS:
