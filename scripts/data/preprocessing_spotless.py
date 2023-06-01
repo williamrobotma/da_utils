@@ -128,9 +128,9 @@ def main():
                             merge_cols(fov.obsm["spot_composition"], new_col_name, col_names)
                             # normalize
 
-                fov.obsm["relative_spot_composition"] = normalize_df(
-                    fov.obsm["relative_spot_composition"]
-                )
+                # fov.obsm["relative_spot_composition"] = normalize_df(
+                #     fov.obsm["relative_spot_composition"]
+                # )
                 fov.write(os.path.join(st_dir, f"{id}-{sample_id}.h5ad"))
 
     celltype_to_merged = {}

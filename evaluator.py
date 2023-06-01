@@ -1,5 +1,5 @@
 """Evaluator for models."""
-# %%
+
 import itertools
 import logging
 import math
@@ -34,10 +34,6 @@ from src.da_utils.scripts.data.preprocessing_mouse_GSE115746 import (
 from src.da_utils.scripts.data.preprocessing_spotless import get_st_sub_map
 
 logger = logging.getLogger(__name__)
-
-
-# self.args_dict['modelname'] = self.args_dict['modelname
-# self.args_dict['milisi'] = self.args_dict['milisi
 
 Ex_to_L_d = {
     1: {5, 6},
@@ -286,20 +282,9 @@ class Evaluator:
             print(split.upper(), end=" |")
             Xs, Xt = (self.sc_mix_d[split], self.mat_sp_d[sample_id])
 
-            logger.debug(f"Xs: {Xs.min()}, {Xs.max()} hasnan {np.isnan(Xs).any()}")
-            logger.debug(f"Xt: {Xt.min()}, {Xt.max()} hasnan {np.isnan(Xt).any()}")
-            logger.debug(f"Xs: {Xs[31416 // 64]}")
-            logger.debug("Getting embeddings")
             source_emb = model.get_embeddings(Xs, source_encoder=True)
             target_emb = model.get_embeddings(Xt, source_encoder=False)
-            logger.debug(
-                f"source_emb_min_max: {source_emb.min()}, {source_emb.argmax()} hasnan {np.isnan(source_emb).any()}"
-            )
-            logger.debug(
-                f"target_emb_min_max: {target_emb.min()}, {target_emb.max()} hasnan {np.isnan(target_emb).any()}"
-            )
-            logger.debug(f"source_emb: {source_emb[31416 // 64]}")
-            # logger.debug(f"encoder: {repr(model.model.encoder)}")
+
             emb = np.concatenate([source_emb, target_emb])
             if self.pretraining:
                 source_emb_noda = model_noda.get_embeddings(Xs, source_encoder=True)
@@ -609,13 +594,7 @@ class Evaluator:
 
         numlist = [self.sc_sub_dict2.get(t) for t in celltypes[:-1]]
         numlist.extend([v for k, v in self.sc_sub_dict2.items() if k not in celltypes[:-1]])
-        # cluster_assignments = [
-        #     "Cancer region",
-        #     "Pancreatic tissue",
-        #     "Interstitium",
-        #     "Duct epithelium",
-        #     "Stroma",
-        # ]
+
         logging.debug(f"Plotting Cell Fractions")
         logging.debug(f"numlist: {numlist}")
         logging.debug(f"celltypes: {celltypes}")
@@ -639,12 +618,6 @@ class Evaluator:
         plt.close()
 
         logging.debug(f"Plotting ROC")
-
-        # st_to_sc_celltype = {}
-        # for k, v in sc_to_st_celltype.items():
-        #     if v not in st_to_sc_celltype:
-        #         st_to_sc_celltype[v] = set()
-        #     st_to_sc_celltype[v].add(k)
 
         n_rows = int(math.ceil(len(sc_to_st_celltype) / 5))
         fig, ax = plt.subplots(
@@ -834,11 +807,6 @@ class Evaluator:
         ):
             st_sub_map = get_st_sub_map()
             cell_type_index = sorted(list(st_sub_map.keys())) + ["Other"]
-            # for spot_comp in adata_st_d[sids[0]].obsm[hue].columns:
-            #     if spot_comp in st_cell_types_to_sc:
-            #         cell_type_index.append(st_cell_types_to_sc[spot_comp])
-            #     else:
-            #         cell_type_index.append(spot_comp)
 
             # create a mapping from spotless cell types to sc cell types
             merged_to_sc = {k: [] for k in cell_type_index}
@@ -916,10 +884,6 @@ class Evaluator:
 
         st_cell_types_to_sc = {re.sub("( |\/)", ".", name): name for name in cell_type_index}
 
-        # print(st_cell_types_to_sc)
-        # print(adata_st_d[sids[0]].obsm[hue].columns)
-        # print(adata_st_d[sids[0]].obsm[hue].rename(columns=st_cell_types_to_sc).columns)
-
         colors = [color_dict[name] for name in cell_type_index]
 
         ctps = OrderedDict([(sid, [None, None]) for sid in sids])
@@ -950,19 +914,14 @@ class Evaluator:
                     self._plot_ax_scatterpie(
                         dists=new_pred_sp_noda_d[sample_id], ax=axs[1][i], **sp_kws
                     )
-                    # print(
-                    #     new_pred_sp_noda_d[sample_id].sum(axis=1),
-                    #     new_pred_sp_noda_d[sample_id].min(),
-                    #     new_pred_sp_noda_d[sample_id].max(),
-                    # )
-                    # print(dists_true.sum(axis=1), dists_true.min(), dists_true.max())
+
                     ctps[sample_id][1] = self.metric_ctp(new_pred_sp_noda_d[sample_id], dists_true)
 
                     axs[1][i].set_title(f"JSD: {ctps[sample_id][1]}")
                     _square_and_strip(axs[1][i])
 
                 self._plot_ax_scatterpie(dists=new_pred_sp_d[sample_id], ax=axs[-1][i], **sp_kws)
-                # assert new_pred_sp_d[sample_id].shape == dists_true.shape
+
                 ctps[sample_id][0] = self.metric_ctp(new_pred_sp_d[sample_id], dists_true)
                 axs[-1][i].set_title(f"JSD: {ctps[sample_id][0]}")
                 _square_and_strip(axs[-1][i])
@@ -992,10 +951,6 @@ class Evaluator:
                     # no sc cell types map to this st cell type
                     new_pred_dict[sid][:, i] = 0
 
-            # add the "other" cell type, as CR doesn't map to any spotless cell type
-            # new_pred_dict[sid][:, -1] = 1 - new_pred_dict[sid][:, :-1].sum(axis=1)
-            # put overflow into "Other"
-            # new_pred_dict[sid][:, -1] = 1.0 - new_pred_dict[sid][:, :-1].sum(axis=1)
         return new_pred_dict
 
     # %%
@@ -1262,66 +1217,6 @@ def listify(inputs):
     return inputs_iter
 
 
-# def get_model(model_path):
-#     check_point_da = torch.load(model_path, map_location=device)
-#     model = check_point_da["model"]
-#     model.to(device)
-#     model.eval()
-#     return model
-
-
-# def get_predictions(model, inputs, source_encoder=False):
-#     if source_encoder:
-#         model.set_encoder("source")
-#     else:
-#         model.target_inference()
-
-#     def out_func(x):
-#         out = model(torch.as_tensor(x, device=device, dtype=torch.float32))
-#         if isinstance(out, tuple):
-#             out = out[0]
-#         return torch.exp(out)
-
-#     try:
-#         inputs.shape
-#     except AttributeError:
-#         pass
-#     else:
-#         inputs = [inputs]
-
-#     with torch.no_grad():
-#         for input in inputs:
-#             yield out_func(input).detach().cpu().numpy()
-
-
-# def get_embeddings(model, inputs, source_encoder=False):
-#     if source_encoder:
-#         model.set_encoder("source")
-#     else:
-#         model.target_inference()
-
-#     try:
-#         encoder = model.encoder
-#     except AttributeError:
-#         if source_encoder:
-#             encoder = model.source_encoder
-#         else:
-#             encoder = model.target_encoder
-
-#     out_func = lambda x: encoder(torch.as_tensor(x, device=device, dtype=torch.float32))
-#     try:
-#         inputs.shape
-#     except AttributeError:
-#         inputs_iter = inputs
-#     else:
-#         logger.debug(f"Embeddings input is single array with shape {inputs.shape}")
-#         inputs_iter = [inputs]
-#     logger.debug(f"Embeddings input length: {len(inputs_iter)}")
-#     with torch.no_grad():
-#         for input in inputs_iter:
-#             yield out_func(input).detach().cpu().numpy()
-
-
 def fit_pca(X, *args, **kwargs):
     return PCA(*args, **kwargs).fit(X)
 
@@ -1330,6 +1225,3 @@ def _square_and_strip(ax):
     ax.axis("equal")
     ax.set_xlabel("")
     ax.set_ylabel("")
-
-
-# %%

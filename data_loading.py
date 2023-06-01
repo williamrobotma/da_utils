@@ -221,10 +221,12 @@ def load_st_spots(
     mat_sp_meta_d = {}
     for l1 in adata.obs.iloc[:, 0].unique():
         mat_sp_d[l1] = {}
+        mat_sp_meta_d[l1] = {}
         for l2 in adata.obs.iloc[:, 1].unique():
-            sub_samp = adata[adata.obs.iloc[:, 0] == l1 and adata.obs.iloc[:, 0] == l2]
-            mat_sp_d[l1][l2] = sub_samp.X
-            mat_sp_meta_d[l1][l2] = sub_samp.obs
+            sub_samp = adata[(adata.obs.iloc[:, 0] == l1) & (adata.obs.iloc[:, 1] == l2)]
+            if len(sub_samp) > 0:
+                mat_sp_d[l1][l2] = sub_samp.X.copy()
+                mat_sp_meta_d[l1][l2] = sub_samp.obs.copy()
         if not st_split and not samp_split:
             mat_sp_d[l1]["test"] = mat_sp_d[l1]["train"]
 
