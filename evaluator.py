@@ -1,5 +1,6 @@
 """Evaluator for models."""
 
+import glob
 import itertools
 import logging
 import math
@@ -8,6 +9,7 @@ import pickle
 import re
 import shutil
 from collections import OrderedDict, defaultdict
+import tarfile
 
 import harmonypy as hm
 import matplotlib as mpl
@@ -64,7 +66,11 @@ class Evaluator:
         print(f"Loading config {self.args_dict['config_fname']} ... ")
 
         with open(
-            os.path.join("configs", self.args_dict["modelname"], self.args_dict["config_fname"]),
+            os.path.join(
+                self.args_dict["configs_dir"],
+                self.args_dict["modelname"],
+                self.args_dict["config_fname"],
+            ),
             "r",
         ) as f:
             self.config = yaml.safe_load(f)
@@ -161,6 +167,8 @@ class Evaluator:
         self.pretrain_folder = os.path.join(model_folder, "pretrain")
         self.advtrain_folder = os.path.join(model_folder, "advtrain")
         self.samp_split_folder = os.path.join(self.advtrain_folder, "samp_split")
+
+        self.model_fname = "final_model"
         # self.pretrain_model_path = os.path.join(pretrain_folder, f"final_model.pth")
 
     def gen_pca(self, sample_id, split, y_dis, emb, emb_noda=None):
@@ -250,16 +258,16 @@ class Evaluator:
                     self.miLISI_d[k][split] = {}
 
         if self.pretraining:
-            model_noda = ModelWrapper(self.pretrain_folder, "final_model")
+            model_noda = ModelWrapper(self.pretrain_folder, name="final_model")
         else:
             model_noda = None
 
         splits, _ = self._get_splits_sids()
 
         if self.data_params.get("samp_split", False):
-            model = ModelWrapper(self.samp_split_folder, "final_model")
+            model = ModelWrapper(self.samp_split_folder, name=self.model_fname)
         elif self.data_params.get("one_model", False):
-            model = ModelWrapper(self.advtrain_folder, "final_model")
+            model = ModelWrapper(self.advtrain_folder, name=self.model_fname)
         else:
             model = None
 
@@ -274,7 +282,9 @@ class Evaluator:
 
     def _eval_embeddings_1samp(self, sample_id, random_states, model=None, model_noda=None):
         if model is None:
-            model = ModelWrapper(os.path.join(self.advtrain_folder, sample_id), "final_model")
+            model = ModelWrapper(
+                os.path.join(self.advtrain_folder, sample_id), name=self.model_fname
+            )
 
         n_jobs = effective_n_jobs(self.args_dict["njobs"])
 
@@ -464,7 +474,8 @@ class Evaluator:
         y_true = adata.obs["cell_type"].map(st_sc_bin).fillna(0)
 
         if y_true.sum() > 0:
-            RocCurveDisplay.from_predictions(y_true=y_true, y_pred=y_pred, name=name, ax=ax)
+            if ax is not None:
+                RocCurveDisplay.from_predictions(y_true=y_true, y_pred=y_pred, name=name, ax=ax)
             return metrics.roc_auc_score(y_true, y_pred)
 
         return np.nan
@@ -545,8 +556,9 @@ class Evaluator:
         )
         plt.close()
 
-    def _plot_samples_pdac(self, sample_id, adata_st, pred_sp, pred_sp_noda=None):
-        logging.debug(f"Plotting {sample_id}")
+    def _plot_samples_pdac(self, sample_id, adata_st, pred_sp, pred_sp_noda=None, no_output=False):
+        if not no_output:
+            logging.debug(f"Plotting {sample_id}")
 
         if self.data_params.get("sc_id") == "CA001063":
             sc_to_st_celltype = {
@@ -595,29 +607,32 @@ class Evaluator:
         numlist = [self.sc_sub_dict2.get(t) for t in celltypes[:-1]]
         numlist.extend([v for k, v in self.sc_sub_dict2.items() if k not in celltypes[:-1]])
 
-        logging.debug(f"Plotting Cell Fractions")
-        logging.debug(f"numlist: {numlist}")
-        logging.debug(f"celltypes: {celltypes}")
-        logging.debug(f"sc_sub_dict2: {self.sc_sub_dict2}")
-        fig, ax = plt.subplots(n_rows, 5, figsize=(20, 4 * n_rows), constrained_layout=True, dpi=10)
-        for i, num in enumerate(numlist):
-            self._plot_cellfraction(num, adata_st, pred_sp, ax.flat[i])
-            ax.flat[i].axis("equal")
-            ax.flat[i].set_xlabel("")
-            ax.flat[i].set_ylabel("")
-        for i in range(n_celltypes, n_rows * 5):
-            ax.flat[i].axis("off")
-        fig.suptitle(sample_id)
+        if not no_output:
+            logging.debug(f"Plotting Cell Fractions")
+            logging.debug(f"numlist: {numlist}")
+            logging.debug(f"celltypes: {celltypes}")
+            logging.debug(f"sc_sub_dict2: {self.sc_sub_dict2}")
+            fig, ax = plt.subplots(
+                n_rows, 5, figsize=(20, 4 * n_rows), constrained_layout=True, dpi=10
+            )
+            for i, num in enumerate(numlist):
+                self._plot_cellfraction(num, adata_st, pred_sp, ax.flat[i])
+                ax.flat[i].axis("equal")
+                ax.flat[i].set_xlabel("")
+                ax.flat[i].set_ylabel("")
+            for i in range(n_celltypes, n_rows * 5):
+                ax.flat[i].axis("off")
+            fig.suptitle(sample_id)
 
-        logging.debug(f"Saving Cell Fractions Figure")
-        fig.savefig(
-            os.path.join(self.results_folder, f"{sample_id}_cellfraction.png"),
-            bbox_inches="tight",
-            dpi=300,
-        )
-        plt.close()
+            logging.debug(f"Saving Cell Fractions Figure")
+            fig.savefig(
+                os.path.join(self.results_folder, f"{sample_id}_cellfraction.png"),
+                bbox_inches="tight",
+                dpi=300,
+            )
+            plt.close()
 
-        logging.debug(f"Plotting ROC")
+            logging.debug(f"Plotting ROC")
 
         n_rows = int(math.ceil(len(sc_to_st_celltype) / 5))
         fig, ax = plt.subplots(
@@ -631,9 +646,10 @@ class Evaluator:
         )
 
         da_aucs = []
-        if self.pretraining:
+        if self.pretraining and pred_sp_noda is not None:
             noda_aucs = []
         for i, num in enumerate(numlist[:-1]):
+            ax_ = ax.flat[i] if not no_output else None
             da_aucs.append(
                 self._plot_roc_pdac(
                     num,
@@ -641,10 +657,10 @@ class Evaluator:
                     pred_sp,
                     self.args_dict["modelname"],
                     sc_to_st_celltype,
-                    ax.flat[i],
+                    ax_,
                 )
             )
-            if self.pretraining:
+            if self.pretraining and pred_sp_noda is not None:
                 noda_aucs.append(
                     self._plot_roc_pdac(
                         num,
@@ -652,31 +668,34 @@ class Evaluator:
                         pred_sp_noda,
                         f"{self.args_dict['modelname']}_wo_da",
                         sc_to_st_celltype,
-                        ax.flat[i],
+                        ax_,
                     )
                 )
 
-            ax.flat[i].plot([0, 1], [0, 1], transform=ax.flat[i].transAxes, ls="--", color="k")
-            ax.flat[i].set_aspect("equal")
-            ax.flat[i].set_xlim([0, 1])
-            ax.flat[i].set_ylim([0, 1])
-            try:
-                cell_name = self.sc_sub_dict[num]
-            except TypeError:
-                cell_name = "Other"
-            ax.flat[i].set_title(cell_name)
+            if not no_output:
+                ax.flat[i].plot([0, 1], [0, 1], transform=ax.flat[i].transAxes, ls="--", color="k")
+                ax.flat[i].set_aspect("equal")
+                ax.flat[i].set_xlim([0, 1])
+                ax.flat[i].set_ylim([0, 1])
+                try:
+                    cell_name = self.sc_sub_dict[num]
+                except TypeError:
+                    cell_name = "Other"
+                ax.flat[i].set_title(cell_name)
 
-            if i >= len(numlist) - 5:
-                ax.flat[i].set_xlabel("FPR")
-            else:
-                ax.flat[i].set_xlabel("")
-            if i % 5 == 0:
-                ax.flat[i].set_ylabel("TPR")
-            else:
-                ax.flat[i].set_ylabel("")
-        for i in range(len(numlist[:-1]), n_rows * 5):
-            ax.flat[i].axis("off")
-        fig.suptitle(sample_id)
+                if i >= len(numlist) - 5:
+                    ax.flat[i].set_xlabel("FPR")
+                else:
+                    ax.flat[i].set_xlabel("")
+                if i % 5 == 0:
+                    ax.flat[i].set_ylabel("TPR")
+                else:
+                    ax.flat[i].set_ylabel("")
+
+        if not no_output:
+            for i in range(len(numlist[:-1]), n_rows * 5):
+                ax.flat[i].axis("off")
+            fig.suptitle(sample_id)
 
         logging.debug(f"Saving ROC Figure")
         fig.savefig(
@@ -686,11 +705,16 @@ class Evaluator:
         )
         plt.close()
 
-        return np.nanmean(da_aucs), np.nanmean(noda_aucs) if self.pretraining else None
+        return (
+            np.nanmean(da_aucs),
+            np.nanmean(noda_aucs) if self.pretraining and pred_sp_noda is not None else None,
+        )
 
-    def _plot_samples(self, sample_id, adata_st_d, pred_sp_d, pred_sp_noda_d=None):
-        logging.debug(f"Plotting {sample_id}")
-        fig, ax = plt.subplots(2, 5, figsize=(20, 8), constrained_layout=True, dpi=10)
+    def _plot_samples(self, sample_id, adata_st_d, pred_sp_d, pred_sp_noda_d=None, no_output=False):
+        if not no_output:
+            logging.debug(f"Plotting {sample_id}")
+            fig, ax = plt.subplots(2, 5, figsize=(20, 8), constrained_layout=True, dpi=10)
+
         num_name_exN_l = []
         for k, v in self.sc_sub_dict.items():
             if "Ex" in v:
@@ -701,37 +725,41 @@ class Evaluator:
 
         numlist = [t[0] for t in num_name_exN_l]  # clust ordinals
 
-        logging.debug(f"Plotting Cell Fractions")
-        for i, num in enumerate(numlist):
-            self._plot_cellfraction(num, adata_st_d[sample_id], pred_sp_d[sample_id], ax.flat[i])
-            ax.flat[i].axis("equal")
-            ax.flat[i].set_xlabel("")
-            ax.flat[i].set_ylabel("")
-        fig.suptitle(sample_id)
+        if not no_output:
+            logging.debug(f"Plotting Cell Fractions")
+            for i, num in enumerate(numlist):
+                self._plot_cellfraction(
+                    num, adata_st_d[sample_id], pred_sp_d[sample_id], ax.flat[i]
+                )
+                ax.flat[i].axis("equal")
+                ax.flat[i].set_xlabel("")
+                ax.flat[i].set_ylabel("")
+            fig.suptitle(sample_id)
 
-        logging.debug(f"Saving Cell Fractions Figure")
-        fig.savefig(
-            os.path.join(self.results_folder, f"{sample_id}_cellfraction.png"),
-            bbox_inches="tight",
-            dpi=300,
-        )
-        plt.close()
+            logging.debug(f"Saving Cell Fractions Figure")
+            fig.savefig(
+                os.path.join(self.results_folder, f"{sample_id}_cellfraction.png"),
+                bbox_inches="tight",
+                dpi=300,
+            )
+            plt.close()
 
-        logging.debug(f"Plotting ROC")
-        fig, ax = plt.subplots(
-            2,
-            5,
-            figsize=(20, 8),
-            constrained_layout=True,
-            sharex=True,
-            sharey=True,
-            dpi=10,
-        )
+            logging.debug(f"Plotting ROC")
+            fig, ax = plt.subplots(
+                2,
+                5,
+                figsize=(20, 8),
+                constrained_layout=True,
+                sharex=True,
+                sharey=True,
+                dpi=10,
+            )
 
         da_aucs = []
-        if self.pretraining:
+        if self.pretraining and pred_sp_noda_d is not None:
             noda_aucs = []
         for i, num in enumerate(numlist):
+            ax_ = ax.flat[i] if not no_output else None
             da_aucs.append(
                 self._plot_roc(
                     num,
@@ -740,10 +768,10 @@ class Evaluator:
                     self.args_dict["modelname"],
                     num_name_exN_l,
                     numlist,
-                    ax.flat[i],
+                    ax_,
                 )
             )
-            if self.pretraining:
+            if self.pretraining and pred_sp_noda_d is not None:
                 noda_aucs.append(
                     self._plot_roc(
                         num,
@@ -752,42 +780,47 @@ class Evaluator:
                         f"{self.args_dict['modelname']}_wo_da",
                         num_name_exN_l,
                         numlist,
-                        ax.flat[i],
+                        ax_,
                     )
                 )
 
-            ax.flat[i].plot(
-                [0, 1],
-                [0, 1],
-                transform=ax.flat[i].transAxes,
-                ls="--",
-                color="k",
+            if not no_output:
+                ax.flat[i].plot(
+                    [0, 1],
+                    [0, 1],
+                    transform=ax.flat[i].transAxes,
+                    ls="--",
+                    color="k",
+                )
+                ax.flat[i].set_aspect("equal")
+                ax.flat[i].set_xlim([0, 1])
+                ax.flat[i].set_ylim([0, 1])
+
+                ax.flat[i].set_title(f"{self.sc_sub_dict[num]}")
+
+                if i >= len(numlist) - 5:
+                    ax.flat[i].set_xlabel("FPR")
+                else:
+                    ax.flat[i].set_xlabel("")
+                if i % 5 == 0:
+                    ax.flat[i].set_ylabel("TPR")
+                else:
+                    ax.flat[i].set_ylabel("")
+
+        if not no_output:
+            fig.suptitle(sample_id)
+            logging.debug(f"Saving ROC Figure")
+            fig.savefig(
+                os.path.join(self.results_folder, f"{sample_id}_roc.png"),
+                bbox_inches="tight",
+                dpi=300,
             )
-            ax.flat[i].set_aspect("equal")
-            ax.flat[i].set_xlim([0, 1])
-            ax.flat[i].set_ylim([0, 1])
+            plt.close()
 
-            ax.flat[i].set_title(f"{self.sc_sub_dict[num]}")
-
-            if i >= len(numlist) - 5:
-                ax.flat[i].set_xlabel("FPR")
-            else:
-                ax.flat[i].set_xlabel("")
-            if i % 5 == 0:
-                ax.flat[i].set_ylabel("TPR")
-            else:
-                ax.flat[i].set_ylabel("")
-
-        fig.suptitle(sample_id)
-        logging.debug(f"Saving ROC Figure")
-        fig.savefig(
-            os.path.join(self.results_folder, f"{sample_id}_roc.png"),
-            bbox_inches="tight",
-            dpi=300,
+        return (
+            np.nanmean(da_aucs),
+            np.nanmean(noda_aucs) if self.pretraining and pred_sp_noda_d is not None else None,
         )
-        plt.close()
-
-        return np.nanmean(da_aucs), np.nanmean(noda_aucs) if self.pretraining else None
 
     def _plot_ax_scatterpie(self, xs, ys, dists, **kwargs):
         for x, y, dist in zip(xs, ys, dists):
@@ -800,6 +833,7 @@ class Evaluator:
         pred_sp_noda_d,
         hue="relative_spot_composition",
         fname="st_cell_types.png",
+        no_output=False,
     ):
         if (
             self.data_params.get("sc_id") == "GSE115746"
@@ -832,59 +866,65 @@ class Evaluator:
             new_pred_sp_d = pred_sp_d
             new_pred_sp_noda_d = pred_sp_noda_d
 
-        # get colour codes
-        cmap = mpl.cm.get_cmap("viridis")
-        color_range = list(
-            np.linspace(
-                0.125,
-                1,
-                len(cell_type_index),
-                endpoint=True,
+        # set up plot
+        if not no_output:
+            splits, sids = self._get_splits_sids()
+
+            # get colour codes
+            cmap = mpl.cm.get_cmap("viridis")
+            color_range = list(
+                np.linspace(
+                    0.125,
+                    1,
+                    len(cell_type_index),
+                    endpoint=True,
+                )
             )
-        )
-        colors = [cmap(x) for x in color_range]
+            colors = [cmap(x) for x in color_range]
 
-        color_dict = {}
-        for cat, color in zip(cell_type_index, colors):
-            color_dict[cat] = color
-        splits, sids = self._get_splits_sids()
+            color_dict = {}
+            for cat, color in zip(cell_type_index, colors):
+                color_dict[cat] = color
 
-        # create figure
-        nrows = 2 if new_pred_sp_noda_d is None else 3
-        fig = plt.figure(
-            figsize=(3 * len(sids), 3 * nrows),
-            constrained_layout=True,
-            dpi=50,
-        )
-        subfigs = fig.subfigures(nrows=nrows, ncols=1)
-        axs = [subfig.subplots(nrows=1, ncols=len(sids)) for subfig in subfigs]
-
-        legend_elements = [
-            plt.Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                label=cell_type,
-                markerfacecolor=color_dict[cell_type],
-                markersize=10,
+            # create figure
+            nrows = 2 if new_pred_sp_noda_d is None else 3
+            fig = plt.figure(
+                figsize=(3 * len(sids), 3 * nrows),
+                constrained_layout=True,
+                dpi=50,
             )
-            for cell_type in cell_type_index
-        ]
-        fig.legend(
-            bbox_to_anchor=(0, 0.5),
-            handles=legend_elements,
-            loc="center right",
-        )
+            subfigs = fig.subfigures(nrows=nrows, ncols=1)
+            axs = [subfig.subplots(nrows=1, ncols=len(sids)) for subfig in subfigs]
 
-        subfigs[0].suptitle("Ground Truth")
-        if new_pred_sp_noda_d is not None:
-            subfigs[1].suptitle(f"{self.args_dict['modelname']}_wo_da")
-        subfigs[-1].suptitle(self.args_dict["modelname"])
+            legend_elements = [
+                plt.Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    label=cell_type,
+                    markerfacecolor=color_dict[cell_type],
+                    markersize=10,
+                )
+                for cell_type in cell_type_index
+            ]
+            fig.legend(
+                bbox_to_anchor=(0, 0.5),
+                handles=legend_elements,
+                loc="center right",
+            )
+
+            subfigs[0].suptitle("Ground Truth")
+            if new_pred_sp_noda_d is not None:
+                subfigs[1].suptitle(f"{self.args_dict['modelname']}_wo_da")
+            subfigs[-1].suptitle(self.args_dict["modelname"])
+
+            colors = [color_dict[name] for name in cell_type_index]
+        else:
+            splits = ["val"]
+            sids = self.st_sample_id_d["val"]
 
         st_cell_types_to_sc = {re.sub("( |\/)", ".", name): name for name in cell_type_index}
-
-        colors = [color_dict[name] for name in cell_type_index]
 
         ctps = OrderedDict([(sid, [None, None]) for sid in sids])
 
@@ -899,41 +939,52 @@ class Evaluator:
                     .reindex(columns=cell_type_index, fill_value=0.0)
                     .to_numpy()
                 )
-                sp_kws = dict(
-                    xs=adata_st_d[sample_id].obs["X"].to_numpy(),
-                    ys=adata_st_d[sample_id].obs["Y"].to_numpy(),
-                    colors=colors,
-                    s=1000,
-                )
-
-                self._plot_ax_scatterpie(dists=dists_true, ax=axs[0][i], **sp_kws)
-                axs[0][i].set_title(f"{split}: {sample_id}" if split else sample_id)
-                _square_and_strip(axs[0][i])
-
-                if new_pred_sp_noda_d is not None:
-                    self._plot_ax_scatterpie(
-                        dists=new_pred_sp_noda_d[sample_id], ax=axs[1][i], **sp_kws
-                    )
-
-                    ctps[sample_id][1] = self.metric_ctp(new_pred_sp_noda_d[sample_id], dists_true)
-
-                    axs[1][i].set_title(f"JSD: {ctps[sample_id][1]}")
-                    _square_and_strip(axs[1][i])
-
-                self._plot_ax_scatterpie(dists=new_pred_sp_d[sample_id], ax=axs[-1][i], **sp_kws)
 
                 ctps[sample_id][0] = self.metric_ctp(new_pred_sp_d[sample_id], dists_true)
-                axs[-1][i].set_title(f"JSD: {ctps[sample_id][0]}")
-                _square_and_strip(axs[-1][i])
+                if new_pred_sp_noda_d is not None:
+                    ctps[sample_id][1] = self.metric_ctp(new_pred_sp_noda_d[sample_id], dists_true)
+
+                # plot
+                if not no_output:
+                    sp_kws = dict(
+                        xs=adata_st_d[sample_id].obs["X"].to_numpy(),
+                        ys=adata_st_d[sample_id].obs["Y"].to_numpy(),
+                        colors=colors,
+                        s=1000,
+                    )
+
+                    self._plot_ax_scatterpie(dists=dists_true, ax=axs[0][i], **sp_kws)
+                    axs[0][i].set_title(f"{split}: {sample_id}" if split else sample_id)
+                    _square_and_strip(axs[0][i])
+
+                    if new_pred_sp_noda_d is not None:
+                        self._plot_ax_scatterpie(
+                            dists=new_pred_sp_noda_d[sample_id], ax=axs[1][i], **sp_kws
+                        )
+
+                        ctps[sample_id][1] = self.metric_ctp(
+                            new_pred_sp_noda_d[sample_id], dists_true
+                        )
+
+                        axs[1][i].set_title(f"JSD: {ctps[sample_id][1]}")
+                        _square_and_strip(axs[1][i])
+
+                    self._plot_ax_scatterpie(
+                        dists=new_pred_sp_d[sample_id], ax=axs[-1][i], **sp_kws
+                    )
+
+                    axs[-1][i].set_title(f"JSD: {ctps[sample_id][0]}")
+                    _square_and_strip(axs[-1][i])
 
                 i += 1
 
-        fig.savefig(
-            os.path.join(self.results_folder, fname),
-            bbox_inches="tight",
-            dpi=300,
-        )
-        plt.close()
+        if not no_output:
+            fig.savefig(
+                os.path.join(self.results_folder, fname),
+                bbox_inches="tight",
+                dpi=300,
+            )
+            plt.close()
 
         return [ctps[sid] for sid in sids]
 
@@ -959,32 +1010,6 @@ class Evaluator:
 
         _, sids = self._get_splits_sids()
 
-        print("Getting predictions: ")
-        if self.data_params.get("samp_split", False):
-            path = self.samp_split_folder
-        elif self.data_params.get("one_model", False):
-            path = self.advtrain_folder
-        else:
-            path = None
-
-        if path is not None:
-            inputs = [self.mat_sp_d[sid] for sid in sids]
-            outputs = iter_preds(inputs, path)
-            pred_sp_d = dict(zip(sids, outputs))
-        else:
-            pred_sp_d = {}
-            for sample_id in sids:
-                path = os.path.join(self.advtrain_folder, sample_id)
-                input = self.mat_sp_d[sample_id]
-                pred_sp_d[sample_id] = ModelWrapper(path).get_predictions(input)
-
-        if self.pretraining:
-            inputs = [self.mat_sp_d[sid] for sid in sids]
-            outputs = iter_preds(inputs, self.pretrain_folder, source_encoder=True)
-            pred_sp_noda_d = dict(zip(sids, outputs))
-        else:
-            pred_sp_noda_d = None
-
         # %%
         print("Loading ST adata: ")
 
@@ -996,6 +1021,103 @@ class Evaluator:
         for sample_id in sids:
             adata_st_d[sample_id] = adata_st[adata_st.obs.sample_id == sample_id]
             adata_st_d[sample_id].obsm["spatial"] = adata_st_d[sample_id].obs[["X", "Y"]].values
+
+        print("Getting predictions: ")
+        if self.data_params.get("samp_split", False):
+            path = self.samp_split_folder
+        elif self.data_params.get("one_model", False):
+            path = self.advtrain_folder
+        else:
+            path = None
+
+        if self.args_dict.get("early_stopping", False) and self.data_params.get(
+            "samp_split", False
+        ):
+            sample_id = self.st_sample_id_d["val"][0]
+
+            input = self.mat_sp_d[sample_id]
+
+            if self.temp_folder_holder.is_temp():
+                new_path = os.path.join(self.results_folder, "curr_models")
+                os.makedirs(new_path, exist_ok=True)
+                for name in glob.glob(os.path.join(path, "*")):
+                    if not name.endswith("tar.gz"):
+                        shutil.copy(name, new_path)
+            else:
+                new_path = path
+
+            with tarfile.open(os.path.join(path, "checkpts.tar.gz"), "r:gz") as tar:
+                tar.extractall(new_path)
+
+            self.samp_split_folder = path = new_path
+
+            pred_sp_chkpt_d = {}
+            for name in glob.glob(os.path.join(path, "checkpt-*")):
+                model_fname = os.path.basename(name).split(".")[0]
+                epoch = int(model_fname.lstrip("checkpt-"))
+                outputs = ModelWrapper(path, name=model_fname).get_predictions(input)
+                pred_sp_chkpt_d[epoch] = {sample_id: outputs}
+
+            # early stopping using val
+            epochs = sorted(list(pred_sp_chkpt_d.keys()))
+            n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(epochs))
+
+            logging.debug(f"n_jobs_samples: {n_jobs_samples}")
+            if self.data_params.get("dset") == "pdac":
+                aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
+                    delayed(self._plot_samples_pdac)(
+                        sample_id,
+                        adata_st_d[sample_id],
+                        pred_sp_chkpt_d[epoch][sample_id],
+                        no_output=True,
+                    )
+                    for epoch in epochs
+                )
+            elif "spotless" in self.data_params.get("st_id", set()):
+                aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
+                    delayed(self._plot_spatial_scatterpie)(
+                        adata_st_d,
+                        pred_sp_chkpt_d[epoch],
+                        hue="relative_spot_composition",
+                        no_output=True,
+                    )
+                    for epoch in epochs
+                )
+            else:
+                aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
+                    delayed(self._plot_samples)(
+                        sample_id, adata_st_d, pred_sp_chkpt_d[epoch], no_output=True
+                    )
+                    for epoch in epochs
+                )
+            # get first elem of each tuple, find argmin to get index of best epoch
+            best_epoch = epochs[np.argmin(next(zip(*aucs)))]
+            print(f"Best epoch: {best_epoch}")
+
+            self.model_fname = f"checkpt-{best_epoch}"
+
+        if path is not None:
+            inputs = [self.mat_sp_d[sid] for sid in sids]
+            outputs = iter_preds(inputs, path, name=self.model_fname)
+            pred_sp_d = dict(zip(sids, outputs))
+
+        else:
+            pred_sp_d = {}
+            for sample_id in sids:
+                path = os.path.join(self.advtrain_folder, sample_id)
+                input = self.mat_sp_d[sample_id]
+                pred_sp_d[sample_id] = ModelWrapper(path, name=self.model_fname).get_predictions(
+                    input
+                )
+
+        if self.pretraining:
+            inputs = [self.mat_sp_d[sid] for sid in sids]
+            outputs = iter_preds(
+                inputs, self.pretrain_folder, name="final_model", source_encoder=True
+            )
+            pred_sp_noda_d = dict(zip(sids, outputs))
+        else:
+            pred_sp_noda_d = None
 
         realspots_d = {"da": {}}
         if self.pretraining:
@@ -1088,7 +1210,7 @@ class Evaluator:
         _, sids = self._get_splits_sids()
 
         if self.pretraining:
-            model = ModelWrapper(self.pretrain_folder)
+            model = ModelWrapper(self.pretrain_folder, name="final_model")
 
             self._calc_jsd(
                 sids[0],
@@ -1101,15 +1223,17 @@ class Evaluator:
                     self.jsd_d["noda"][split][sample_id] = score
 
         if self.data_params.get("samp_split", False):
-            model = ModelWrapper(self.samp_split_folder)
+            model = ModelWrapper(self.samp_split_folder, name=self.model_fname)
         elif self.data_params.get("one_model", False):
-            model = ModelWrapper(self.advtrain_folder)
+            model = ModelWrapper(self.advtrain_folder, name=self.model_fname)
         else:
             model = None
 
         for sample_id in sids:
             if model is None:
-                model_samp = ModelWrapper(os.path.join(self.advtrain_folder, sample_id))
+                model_samp = ModelWrapper(
+                    os.path.join(self.advtrain_folder, sample_id), name=self.model_fname
+                )
                 self._calc_jsd(sample_id, model=model_samp, da="da")
             else:
                 self._calc_jsd(sample_id, model=model, da="da")
@@ -1138,6 +1262,14 @@ class Evaluator:
         return
 
     def produce_results(self):
+        if (
+            self.args_dict.get("early_stopping", False)
+            and self.data_params.get("samp_split", False)
+            and self.temp_folder_holder.is_temp()
+        ):
+            for name in glob.glob(os.path.join(self.samp_split_folder, "checkpt-*.pth")):
+                os.remove(name)
+
         if self.data_params.get("dset") == "pdac":
             real_spot_header = "Real Spots (Mean AUC celltype)"
         elif "spotless" in self.data_params.get("st_id", set()):
@@ -1155,7 +1287,11 @@ class Evaluator:
             df_keys.insert(2, f"miLISI (perplexity={self.milisi_perplexity})")
 
         da_dict_keys = ["da"]
-        da_df_keys = ["After DA"]
+        if self.args_dict.get("early_stopping", False):
+            da_df_keys = [f"After DA (epoch {self.model_fname.split('-')[-1]})"]
+        else:
+            da_df_keys = ["After DA (final model)"]
+
         if self.pretraining:
             da_dict_keys.insert(0, "noda")
             da_df_keys.insert(0, "Before DA")
@@ -1170,8 +1306,11 @@ class Evaluator:
             df.index.set_names(["SC Split", "Sample ID"], inplace=True)
 
         results_df = pd.concat(results_df, axis=0, keys=da_df_keys)
-
-        results_df.to_csv(os.path.join(self.results_folder, "results.csv"))
+        if self.args_dict.get("early_stopping", False):
+            results_fname = f"results_{self.model_fname}.csv"
+        else:
+            results_fname = "results.csv"
+        results_df.to_csv(os.path.join(self.results_folder, results_fname))
         print(results_df)
 
         with open(os.path.join(self.results_folder, "config.yml"), "w") as f:
@@ -1189,7 +1328,7 @@ class Evaluator:
         return splits, sids
 
 
-def iter_preds(inputs, model_dir, name="final_model", source_encoder=False):
+def iter_preds(inputs, model_dir, name, source_encoder=False):
     model = ModelWrapper(model_dir, name)
     inputs_iter = listify(inputs)
 
@@ -1197,7 +1336,7 @@ def iter_preds(inputs, model_dir, name="final_model", source_encoder=False):
         yield model.get_predictions(input, source_encoder=source_encoder)
 
 
-def iter_embs(inputs, model_dir, name="final_model", source_encoder=False):
+def iter_embs(inputs, model_dir, name, source_encoder=False):
     model = ModelWrapper(model_dir, name)
     inputs_iter = listify(inputs)
     logger.debug(f"Embeddings input length: {len(inputs_iter)}")
@@ -1225,3 +1364,6 @@ def _square_and_strip(ax):
     ax.axis("equal")
     ax.set_xlabel("")
     ax.set_ylabel("")
+
+
+# %%

@@ -77,6 +77,7 @@ class TempFolderHolder:
     """Holds temporary directory and real directory for outputs."""
 
     def __init__(self):
+        self._is_temp = False
         pass
 
     def set_output_folder(self, tmp_dir, out_folder):
@@ -96,8 +97,10 @@ class TempFolderHolder:
         if tmp_dir:
             self.real_out_folder = out_folder
             self.curr_out_folder = tmp_dir
+            self._is_temp = True
         else:
             self.real_out_folder = self.curr_out_folder = out_folder
+            self._is_temp = False
 
         print(f"Saving results to {self.curr_out_folder} ...")
         if not os.path.isdir(self.curr_out_folder):
@@ -110,13 +113,21 @@ class TempFolderHolder:
     def copy_out(self):
         """If temp folder is different from final folder, copy out to final."""
 
+        if not os.path.exists(self.real_out_folder):
+            os.makedirs(self.real_out_folder)
+        else:
+            warnings.warn("Destination exists. Will overwrite.")
+
         if not os.path.samefile(self.real_out_folder, self.curr_out_folder):
             print(f"Copying from {self.curr_out_folder} to {self.real_out_folder} ...")
-            if os.path.exists(self.real_out_folder):
-                warnings.warn("Destination exists. Will overwrite.")
 
             shutil.copytree(
                 self.curr_out_folder,
                 self.real_out_folder,
                 dirs_exist_ok=True,
             )
+        self._is_temp = False
+
+    def is_temp(self):
+        """Returns whether the output folder is temporary."""
+        return self._is_temp

@@ -202,15 +202,17 @@ def load_st_spots(
 
 
     """
+    scaler_name = processed_data_dir.rstrip('/').split('/')[-1] # get last dir
+
     if samp_split:
         fname = "mat_sp_samp_split_d.h5ad"
     elif st_split:
-        if one_model:
+        if one_model and scaler_name != "unscaled":
             fname = "mat_sp_split_d_one_model.h5ad"
         else:
             fname = "mat_sp_split_d.h5ad"
     else:
-        if one_model:
+        if one_model and scaler_name != "unscaled":
             fname = "mat_sp_train_d_one_model.h5ad"
         else:
             fname = "mat_sp_train_d.h5ad"
