@@ -234,3 +234,19 @@ def qc_sc(
 
     if remove_mt:
         adata = adata[:, ~adata.var["mt"]]
+
+
+def safe_stratify(stratify):
+    """Makes stratify arg for sklearn splits safe when there is only one class.
+
+    Args:
+        stratify (array-like): Array to stratify.
+
+    Returns:
+        `stratify` if there is more than one unique value, else None.
+
+    """
+    if len(np.unique(stratify)) > 1:
+        return stratify
+
+    return None
