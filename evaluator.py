@@ -8,8 +8,8 @@ import os
 import pickle
 import re
 import shutil
-from collections import OrderedDict, defaultdict
 import tarfile
+from collections import OrderedDict, defaultdict
 
 import harmonypy as hm
 import matplotlib as mpl
@@ -26,7 +26,11 @@ from sklearn import metrics, model_selection
 from sklearn.decomposition import PCA
 from sklearn.metrics import RocCurveDisplay
 
-from src.da_models.model_utils.utils import ModelWrapper, dict_to_lib_config
+from src.da_models.model_utils.utils import (
+    ModelWrapper,
+    dict_to_lib_config,
+    get_best_params_file,
+)
 from src.da_utils import data_loading, evaluation
 from src.da_utils.output_utils import TempFolderHolder
 from src.da_utils.scripts.data.preprocessing_mouse_GSE115746 import (
@@ -63,13 +67,40 @@ class Evaluator:
         print("Using library config:")
         print(self.lib_config)
 
-        print(f"Loading config {self.args_dict['config_fname']} ... ")
+        if self.args_dict["reverse_val"]:
+            print("Searching for best model through reverse validation")
+
+            # use basic non-specific config provided first
+            with open(
+                os.path.join(
+                    self.args_dict["configs_dir"],
+                    self.args_dict["modelname"],
+                    self.args_dict["config_fname"],
+                ),
+                "r",
+            ) as f:
+                basic_config = yaml.safe_load(f)
+                basic_data_params = basic_config["data_params"]
+
+            config_fname, rv_df, best_hp = get_best_params_file(
+                self.args_dict["modelname"],
+                basic_data_params["dset"],
+                basic_data_params["sc_id"],
+                basic_data_params["st_id"],
+                self.args_dict["configs_dir"],
+            )
+            print("Best RV config:")
+            print(rv_df.loc[best_hp])
+        else:
+            config_fname = self.args_dict["config_fname"]
+
+        print(f"Loading config {config_fname} ... ")
 
         with open(
             os.path.join(
                 self.args_dict["configs_dir"],
                 self.args_dict["modelname"],
-                self.args_dict["config_fname"],
+                config_fname,
             ),
             "r",
         ) as f:
@@ -90,6 +121,7 @@ class Evaluator:
             lib_seed_path=lib_seed_path,
             **self.data_params,
         )
+
         model_folder = os.path.join("model", model_rel_path)
 
         if self.args_dict["tmpdir"]:
@@ -107,7 +139,13 @@ class Evaluator:
         self.pretraining = self.args_dict["pretraining"] or self.train_params.get(
             "pretraining", False
         )
-        results_folder = os.path.join("results", model_rel_path)
+        if self.args_dict["reverse_val"]:
+            model_rel_path_l = model_rel_path.split(os.sep)
+            results_folder = os.path.join(
+                "results", os.sep.join(model_rel_path_l[:3]), "reverse_val"
+            )
+        else:
+            results_folder = os.path.join("results", model_rel_path)
 
         self.temp_folder_holder = TempFolderHolder()
         temp_results_folder = (
@@ -143,12 +181,16 @@ class Evaluator:
         if self.data_params.get("samp_split", False):
             self.st_sample_id_d = {}
             for split in self.splits:
+                if split == "val":
+                    continue
                 self.st_sample_id_d[split] = [
                     sid for sid in st_sample_id_l if sid in mat_sp_d[split].keys()
                 ]
 
             self.mat_sp_d = {}
             for split in self.splits:
+                if split == "val":
+                    continue
                 for sid in self.st_sample_id_d[split]:
                     self.mat_sp_d[sid] = mat_sp_d[split][sid]
 
@@ -1322,7 +1364,7 @@ class Evaluator:
         if "" in self.st_sample_id_d:
             splits = [""]
         else:
-            splits = self.splits
+            splits = [split for split in self.splits if split in self.st_sample_id_d]
 
         sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
         return splits, sids
