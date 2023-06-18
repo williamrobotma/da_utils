@@ -921,8 +921,8 @@ class Evaluator:
 
             colors = [color_dict[name] for name in cell_type_index]
         else:
-            splits = ["val"]
-            sids = self.st_sample_id_d["val"]
+            splits = ["train"]
+            sids = self.st_sample_id_d["train"]
 
         st_cell_types_to_sc = {re.sub("( |\/)", ".", name): name for name in cell_type_index}
 
@@ -1033,7 +1033,7 @@ class Evaluator:
         if self.args_dict.get("early_stopping", False) and self.data_params.get(
             "samp_split", False
         ):
-            sample_id = self.st_sample_id_d["val"][0]
+            sample_id = self.st_sample_id_d["train"][0]
 
             input = self.mat_sp_d[sample_id]
 
@@ -1058,7 +1058,7 @@ class Evaluator:
                 outputs = ModelWrapper(path, name=model_fname).get_predictions(input)
                 pred_sp_chkpt_d[epoch] = {sample_id: outputs}
 
-            # early stopping using val
+            # early stopping using train as validation set
             epochs = sorted(list(pred_sp_chkpt_d.keys()))
             n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(epochs))
 
