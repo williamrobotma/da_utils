@@ -155,6 +155,8 @@ class Evaluator:
             temp_results_folder, results_folder
         )
 
+        rv_df.to_csv(os.path.join(self.results_folder, "rv_df.csv"))
+        
         sc.set_figure_params(facecolor="white", figsize=(8, 8))
         sc.settings.verbosity = 3
 
@@ -1307,10 +1309,13 @@ class Evaluator:
         if (
             self.args_dict.get("early_stopping", False)
             and self.data_params.get("samp_split", False)
-            and self.temp_folder_holder.is_temp()
         ):
-            for name in glob.glob(os.path.join(self.samp_split_folder, "checkpt-*.pth")):
-                os.remove(name)
+            if self.temp_folder_holder.is_temp():
+                for name in glob.glob(os.path.join(self.samp_split_folder, "checkpt-*.pth")):
+                    os.remove(name)
+            else:
+                shutil.rmtree(self.samp_split_folder)
+
 
         if self.data_params.get("dset") == "pdac":
             real_spot_header = "Real Spots (Mean AUC celltype)"
