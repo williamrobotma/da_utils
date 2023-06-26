@@ -156,7 +156,7 @@ class Evaluator:
         )
 
         rv_df.to_csv(os.path.join(self.results_folder, "rv_df.csv"))
-        
+
         sc.set_figure_params(facecolor="white", figsize=(8, 8))
         sc.settings.verbosity = 3
 
@@ -274,7 +274,7 @@ class Evaluator:
         emb_test_50 = pca.transform(emb_test)
 
         logger.debug("initialize brfc")
-        n_jobs = effective_n_jobs(self.args_dict["njobs"])
+        n_jobs = effective_n_jobs(int(self.args_dict["njobs"]))
         clf = BalancedRandomForestClassifier(random_state=145, n_jobs=n_jobs)
         logger.debug("fit brfc")
         clf.fit(emb_train_50, y_dis_train)
@@ -330,7 +330,7 @@ class Evaluator:
                 os.path.join(self.advtrain_folder, sample_id), name=self.model_fname
             )
 
-        n_jobs = effective_n_jobs(self.args_dict["njobs"])
+        n_jobs = effective_n_jobs(int(self.args_dict["njobs"]))
 
         for split, rs in zip(self.splits, random_states):
             print(split.upper(), end=" |")
@@ -1104,7 +1104,7 @@ class Evaluator:
 
             # early stopping using train as validation set
             epochs = sorted(list(pred_sp_chkpt_d.keys()))
-            n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(epochs))
+            n_jobs_samples = min(effective_n_jobs(int(self.args_dict["njobs"])), len(epochs))
 
             logging.debug(f"n_jobs_samples: {n_jobs_samples}")
             if self.data_params.get("dset") == "pdac":
@@ -1188,7 +1188,7 @@ class Evaluator:
         self._plot_spatial(adata_st_d, color_dict, color="spatialLIBD", fname="layers.png")
 
         print("Plotting Samples")
-        n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(sids))
+        n_jobs_samples = min(effective_n_jobs(int(self.args_dict["njobs"])), len(sids))
         logging.debug(f"n_jobs_samples: {n_jobs_samples}")
         aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
             delayed(self._plot_samples)(sid, adata_st_d, pred_sp_d, pred_sp_noda_d) for sid in sids
@@ -1207,7 +1207,7 @@ class Evaluator:
         self._plot_spatial(adata_st_d, cluster_to_rgb, color="cell_type", fname="st_cell_types.png")
 
         print("Plotting Samples")
-        n_jobs_samples = min(effective_n_jobs(self.args_dict["njobs"]), len(sids))
+        n_jobs_samples = min(effective_n_jobs(int(self.args_dict["njobs"])), len(sids))
         logging.debug(f"n_jobs_samples: {n_jobs_samples}")
         if n_jobs_samples < 4:
             print("n_jobs_samples < 4, no parallelization")
@@ -1306,16 +1306,14 @@ class Evaluator:
         return
 
     def produce_results(self):
-        if (
-            self.args_dict.get("early_stopping", False)
-            and self.data_params.get("samp_split", False)
+        if self.args_dict.get("early_stopping", False) and self.data_params.get(
+            "samp_split", False
         ):
             if self.temp_folder_holder.is_temp():
                 for name in glob.glob(os.path.join(self.samp_split_folder, "checkpt-*.pth")):
                     os.remove(name)
             else:
                 shutil.rmtree(self.samp_split_folder)
-
 
         if self.data_params.get("dset") == "pdac":
             real_spot_header = "Real Spots (Mean AUC celltype)"
