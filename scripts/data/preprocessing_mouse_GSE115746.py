@@ -26,9 +26,9 @@ cell_subclass_to_spot_composition = {
     "Endo": {"Endothelial", "Choroid plexus"},
     "High Intronic": {"Excitatory layer 5/6"},  # all High Intronic are VISp L5 Endou
     ## Doublets; these are cell clusters
-    "Peri": {"Endothelial", "Choroid plexus"},
-    "SMC": {"Endothelial", "Choroid plexus"},
-    "VLMC": {"Endothelial", "Choroid plexus"},
+    "Peri": {"Endothelial", "Choroid plexus"},  # pericyte
+    "SMC": set(),  # smooth muscle cell
+    "VLMC": set(),  # vascular leptomeningeal cell
     "Macrophage": {"Microglia"},
     "Lamp5": {
         "Interneurons",

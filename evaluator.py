@@ -155,7 +155,8 @@ class Evaluator:
             temp_results_folder, results_folder
         )
 
-        rv_df.to_csv(os.path.join(self.results_folder, "rv_df.csv"))
+        if self.args_dict["reverse_val"]:
+            rv_df.to_csv(os.path.join(self.results_folder, "rv_df.csv"))
 
         sc.set_figure_params(facecolor="white", figsize=(8, 8))
         sc.settings.verbosity = 3
@@ -381,7 +382,14 @@ class Evaluator:
                     self.milisi_perplexity = 5
                 else:
                     self.milisi_perplexity = 30
-                self._run_milisi(sample_id, n_jobs, split, emb_bal, emb_noda_bal, y_dis_bal)
+                self._run_milisi(
+                    sample_id,
+                    n_jobs,
+                    split,
+                    emb_bal,
+                    emb_noda_bal,
+                    y_dis_bal,
+                )
 
             # rf50
             print("rf50", end=" ")
@@ -425,7 +433,6 @@ class Evaluator:
 
         self.miLISI_d["da"][split][sample_id] = np.median(score)
         logger.debug(f"miLISI da: {self.miLISI_d['da'][split][sample_id]}")
-
         if self.pretraining:
             score = self._milisi_parallel(n_jobs, emb_noda, meta_df)
             self.miLISI_d["noda"][split][sample_id] = np.median(score)
@@ -441,7 +448,12 @@ class Evaluator:
                     perplexity=self.milisi_perplexity,
                 )
 
-        return hm.compute_lisi(emb, meta_df, ["Domain"])
+        return hm.compute_lisi(
+            emb,
+            meta_df,
+            ["Domain"],
+            perplexity=self.milisi_perplexity,
+        )
 
     def _plot_cellfraction(self, visnum, adata, pred_sp, ax=None):
         """Plot predicted cell fraction for a given visnum"""
@@ -874,7 +886,7 @@ class Evaluator:
         self,
         adata_st_d,
         pred_sp_d,
-        pred_sp_noda_d,
+        pred_sp_noda_d=None,
         hue="relative_spot_composition",
         fname="st_cell_types.png",
         no_output=False,
@@ -970,11 +982,13 @@ class Evaluator:
 
         st_cell_types_to_sc = {re.sub("( |\/)", ".", name): name for name in cell_type_index}
 
-        ctps = OrderedDict([(sid, [None, None]) for sid in sids])
+        ctps = OrderedDict([(sid, [None, None]) for sid in sids if sid in new_pred_sp_d])
 
         i = 0
         for split in splits:
             for sample_id in self.st_sample_id_d[split]:
+                if sample_id not in new_pred_sp_d:
+                    continue
                 dists_true = (
                     adata_st_d[sample_id]
                     .obsm[hue]
@@ -983,7 +997,6 @@ class Evaluator:
                     .reindex(columns=cell_type_index, fill_value=0.0)
                     .to_numpy()
                 )
-
                 ctps[sample_id][0] = self.metric_ctp(new_pred_sp_d[sample_id], dists_true)
                 if new_pred_sp_noda_d is not None:
                     ctps[sample_id][1] = self.metric_ctp(new_pred_sp_noda_d[sample_id], dists_true)
@@ -1030,7 +1043,7 @@ class Evaluator:
             )
             plt.close()
 
-        return [ctps[sid] for sid in sids]
+        return [ctps[sid] for sid in sids if sid in ctps]
 
     def _merge_sc_preds(self, pred_sp_d, cell_type_index, merged_to_sc):
         new_pred_dict = {}
@@ -1098,7 +1111,7 @@ class Evaluator:
             pred_sp_chkpt_d = {}
             for name in glob.glob(os.path.join(path, "checkpt-*")):
                 model_fname = os.path.basename(name).split(".")[0]
-                epoch = int(model_fname.lstrip("checkpt-"))
+                epoch = int(model_fname[len("checkpt-") :])  # strip "checkpt-"
                 outputs = ModelWrapper(path, name=model_fname).get_predictions(input)
                 pred_sp_chkpt_d[epoch] = {sample_id: outputs}
 
@@ -1127,6 +1140,17 @@ class Evaluator:
                     )
                     for epoch in epochs
                 )
+                # aucs = [
+                #     self._plot_spatial_scatterpie(
+                #         adata_st_d,
+                #         pred_sp_chkpt_d[epoch],
+                #         hue="relative_spot_composition",
+                #         no_output=True,
+                #     )
+                #     for epoch in epochs
+                # ]
+                aucs = [au for auc in aucs for au in auc]
+
             else:
                 aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
                     delayed(self._plot_samples)(
@@ -1134,6 +1158,7 @@ class Evaluator:
                     )
                     for epoch in epochs
                 )
+
             # get first elem of each tuple, find argmin to get index of best epoch
             best_epoch = epochs[np.argmin(next(zip(*aucs)))]
             print(f"Best epoch: {best_epoch}")
