@@ -10,6 +10,7 @@ import re
 import shutil
 import tarfile
 from collections import OrderedDict, defaultdict
+import warnings
 
 import harmonypy as hm
 import matplotlib as mpl
@@ -1075,9 +1076,9 @@ class Evaluator:
         adata_st_d = {}
 
         # Get samples and coordinates
-        for sample_id in sids:
-            adata_st_d[sample_id] = adata_st[adata_st.obs.sample_id == sample_id]
-            adata_st_d[sample_id].obsm["spatial"] = adata_st_d[sample_id].obs[["X", "Y"]].values
+        for sid in sids:
+            adata_st_d[sid] = adata_st[adata_st.obs.sample_id == sid]
+            adata_st_d[sid].obsm["spatial"] = adata_st_d[sid].obs[["X", "Y"]].values
 
         print("Getting predictions: ")
         if self.data_params.get("samp_split", False):
@@ -1087,12 +1088,8 @@ class Evaluator:
         else:
             path = None
 
-        if self.args_dict.get("early_stopping", False) and self.data_params.get(
-            "samp_split", False
-        ):
-            sample_id = self.st_sample_id_d["train"][0]
-
-            input = self.mat_sp_d[sample_id]
+        if self.args_dict.get("early_stopping") and self.data_params.get("samp_split"):
+            val_sids = self.st_sample_id_d["train"]
 
             if self.temp_folder_holder.is_temp():
                 new_path = os.path.join(self.results_folder, "curr_models")
@@ -1112,25 +1109,22 @@ class Evaluator:
             for name in glob.glob(os.path.join(path, "checkpt-*")):
                 model_fname = os.path.basename(name).split(".")[0]
                 epoch = int(model_fname[len("checkpt-") :])  # strip "checkpt-"
-                outputs = ModelWrapper(path, name=model_fname).get_predictions(input)
-                pred_sp_chkpt_d[epoch] = {sample_id: outputs}
+                epoch_model = ModelWrapper(path, name=model_fname)
+                pred_sp_chkpt_d[epoch] = {
+                    sid: epoch_model.get_predictions(self.mat_sp_d[sid]) for sid in val_sids
+                }
 
             # early stopping using train as validation set
             epochs = sorted(list(pred_sp_chkpt_d.keys()))
-            n_jobs_samples = min(effective_n_jobs(int(self.args_dict["njobs"])), len(epochs))
 
-            logging.debug(f"n_jobs_samples: {n_jobs_samples}")
-            if self.data_params.get("dset") == "pdac":
-                aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
-                    delayed(self._plot_samples_pdac)(
-                        sample_id,
-                        adata_st_d[sample_id],
-                        pred_sp_chkpt_d[epoch][sample_id],
-                        no_output=True,
-                    )
-                    for epoch in epochs
+            if "spotless" in self.data_params.get("st_id", set()):
+                n_jobs_samples = min(
+                    effective_n_jobs(int(self.args_dict["njobs"])),
+                    len(epochs),
                 )
-            elif "spotless" in self.data_params.get("st_id", set()):
+
+                logging.debug(f"n_jobs_samples: {n_jobs_samples}")
+
                 aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
                     delayed(self._plot_spatial_scatterpie)(
                         adata_st_d,
@@ -1140,27 +1134,53 @@ class Evaluator:
                     )
                     for epoch in epochs
                 )
-                # aucs = [
-                #     self._plot_spatial_scatterpie(
-                #         adata_st_d,
-                #         pred_sp_chkpt_d[epoch],
-                #         hue="relative_spot_composition",
-                #         no_output=True,
-                #     )
-                #     for epoch in epochs
-                # ]
-                aucs = [au for auc in aucs for au in auc]
+                aucs_df = pd.DataFrame(aucs, columns=val_sids, index=epochs)
+                aucs_df = aucs_df.applymap(lambda x: x[0])
 
+                # min because divergence metric
+                best_epoch = aucs_df.mean(axis=1).idxmin()
+                # print(aucs_df)
+                # print(aucs_df.mean(axis=1))
             else:
-                aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
-                    delayed(self._plot_samples)(
-                        sample_id, adata_st_d, pred_sp_chkpt_d[epoch], no_output=True
-                    )
-                    for epoch in epochs
+                epochs_sids = list(itertools.product(epochs, val_sids))
+                n_jobs_samples = min(
+                    effective_n_jobs(int(self.args_dict["njobs"])),
+                    len(epochs_sids),
                 )
 
-            # get first elem of each tuple, find argmin to get index of best epoch
-            best_epoch = epochs[np.argmin(next(zip(*aucs)))]
+                logging.debug(f"n_jobs_samples: {n_jobs_samples}")
+
+                if self.data_params.get("dset") == "pdac":
+                    aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
+                        delayed(self._plot_samples_pdac)(
+                            sid,
+                            adata_st_d[sid],
+                            pred_sp_chkpt_d[epoch][sid],
+                            no_output=True,
+                        )
+                        for epoch, sid in epochs_sids
+                    )
+
+                else:
+                    aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
+                        delayed(self._plot_samples)(
+                            sid,
+                            adata_st_d,
+                            pred_sp_chkpt_d[epoch],
+                            no_output=True,
+                        )
+                        for epoch, sid in epochs_sids
+                    )
+
+                aucs_df = pd.DataFrame.from_records(epochs_sids, columns=["epoch", "sample_id"])
+                aucs_df["aucs"] = aucs
+                aucs_df["aucs"] = aucs_df["aucs"].map(lambda x: x[0])
+
+                aucs_df = aucs_df.pivot(index="epoch", columns="sample_id", values="aucs")
+
+                # max because auc
+                best_epoch = aucs_df.mean(axis=1).idxmax()
+
             print(f"Best epoch: {best_epoch}")
 
             self.model_fname = f"checkpt-{best_epoch}"
@@ -1334,11 +1354,17 @@ class Evaluator:
         if self.args_dict.get("early_stopping", False) and self.data_params.get(
             "samp_split", False
         ):
+            print("Cleaning up ... ")
             if self.temp_folder_holder.is_temp():
+                # clean up temp folder before copying back
+                if os.path.basename(os.path.norm(self.samp_split_folder)) == "curr_models":
+                    shutil.rmtree(self.samp_split_folder)
+                else:
+                    warnings.warn("temp folder not found, skipping clean up")
+            else:
+                # clean up local folder
                 for name in glob.glob(os.path.join(self.samp_split_folder, "checkpt-*.pth")):
                     os.remove(name)
-            else:
-                shutil.rmtree(self.samp_split_folder)
 
         if self.data_params.get("dset") == "pdac":
             real_spot_header = "Real Spots (Mean AUC celltype)"
@@ -1358,7 +1384,8 @@ class Evaluator:
 
         da_dict_keys = ["da"]
         if self.args_dict.get("early_stopping", False):
-            da_df_keys = [f"After DA (epoch {self.model_fname.split('-')[-1]})"]
+            epoch = int(self.model_fname[len("checkpt-") :])  # strip "checkpt-"
+            da_df_keys = [f"After DA (epoch {epoch})"]
         else:
             da_df_keys = ["After DA (final model)"]
 
