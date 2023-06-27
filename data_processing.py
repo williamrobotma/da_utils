@@ -2,12 +2,14 @@
 
 Adapted from: https://github.com/mexchy1000/CellDART
 """
+import math
+
 import matplotlib.pyplot as plt
 import matplotlib_venn
 import numpy as np
 import pandas as pd
 import scanpy as sc
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, effective_n_jobs
 from sklearn import preprocessing
 
 
@@ -67,7 +69,8 @@ def random_mix(X, y, nmix=5, n_samples=10000, seed=0, n_jobs=1):
 
         return XX_, yy
 
-    pseudo_samples = Parallel(n_jobs=n_jobs, verbose=1)(
+    batch_size = math.ceil(n_samples / effective_n_jobs(n_jobs))
+    pseudo_samples = Parallel(n_jobs=n_jobs, verbose=1, batch_size=batch_size)(
         delayed(_get_pseudo_sample)(i) for i in range(n_samples)
     )
     pseudo_gex, ctps = zip(*pseudo_samples)
