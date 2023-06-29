@@ -510,9 +510,13 @@ class Evaluator:
         y_true = adata.obs["spatialLIBD"].map(layer_to_layer_number).fillna(0)
         # print(y_true)
         # print(y_true.isna().sum())
-        RocCurveDisplay.from_predictions(y_true=y_true, y_pred=y_pred, name=name, ax=ax)
+        if y_true.sum() > 0:
+            if ax is not None:
+                RocCurveDisplay.from_predictions(y_true=y_true, y_pred=y_pred, name=name, ax=ax)
 
-        return metrics.roc_auc_score(y_true, y_pred)
+            return metrics.roc_auc_score(y_true, y_pred)
+
+        return np.nan
 
     def _plot_roc_pdac(self, visnum, adata, pred_sp, name, sc_to_st_celltype, ax=None):
         """Plot ROC for a given visnum (PDAC)"""
@@ -754,13 +758,13 @@ class Evaluator:
                 ax.flat[i].axis("off")
             fig.suptitle(sample_id)
 
-        logging.debug(f"Saving ROC Figure")
-        fig.savefig(
-            os.path.join(self.results_folder, f"{sample_id}_roc.png"),
-            bbox_inches="tight",
-            dpi=300,
-        )
-        plt.close()
+            logging.debug(f"Saving ROC Figure")
+            fig.savefig(
+                os.path.join(self.results_folder, f"{sample_id}_roc.png"),
+                bbox_inches="tight",
+                dpi=300,
+            )
+            plt.close()
 
         return (
             np.nanmean(da_aucs),
@@ -1138,9 +1142,11 @@ class Evaluator:
                 aucs_df = aucs_df.applymap(lambda x: x[0])
 
                 # min because divergence metric
-                best_epoch = aucs_df.mean(axis=1).idxmin()
+                aucs_mean = aucs_df.mean(axis=1)
+                best_epoch = aucs_mean.idxmin()
                 # print(aucs_df)
                 # print(aucs_df.mean(axis=1))
+                metric_name = "Cosine Distance"
             else:
                 epochs_sids = list(itertools.product(epochs, val_sids))
                 n_jobs_samples = min(
@@ -1179,9 +1185,40 @@ class Evaluator:
                 aucs_df = aucs_df.pivot(index="epoch", columns="sample_id", values="aucs")
 
                 # max because auc
-                best_epoch = aucs_df.mean(axis=1).idxmax()
+                aucs_mean = aucs_df.mean(axis=1)
+                best_epoch = aucs_mean.idxmax()
+
+                metric_name = "AUROC"
 
             print(f"Best epoch: {best_epoch}")
+
+            fig, ax = plt.subplots(figsize=(15, 5), dpi=50)
+            ax.plot(aucs_mean.index.to_series(), aucs_mean, marker="o")
+            ax.axvline(best_epoch, color="tab:green")
+            ax.set_ylim(0, 1)
+
+            n_epochs = aucs_mean.index.max() + 1
+            x_text = best_epoch + (2 if best_epoch < n_epochs * 0.75 else -2)
+            ha_text = "left" if best_epoch < n_epochs * 0.75 else "right"
+
+            ax.grid(which="major")
+            ax.minorticks_on()
+            ax.grid(which="minor", alpha=0.2)
+            ax.text(
+                x=x_text,
+                y=0.15,
+                s=f"Best {metric_name}:\n{aucs_mean.loc[best_epoch]:.4f} at epoch {best_epoch}",
+                ha=ha_text,
+                size="small",
+            )
+            ax.set_title(f"Average {metric_name}s (macro across types and samples)")
+
+            fig.savefig(
+                os.path.join(self.results_folder, "early_stopping.png"),
+                bbox_inches="tight",
+                dpi=300,
+            )
+            plt.close()
 
             self.model_fname = f"checkpt-{best_epoch}"
 
