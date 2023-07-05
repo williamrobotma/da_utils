@@ -1394,7 +1394,7 @@ class Evaluator:
             print("Cleaning up ... ")
             if self.temp_folder_holder.is_temp():
                 # clean up temp folder before copying back
-                if os.path.basename(os.path.norm(self.samp_split_folder)) == "curr_models":
+                if os.path.basename(self.samp_split_folder) == "curr_models":
                     shutil.rmtree(self.samp_split_folder)
                 else:
                     warnings.warn("temp folder not found, skipping clean up")
