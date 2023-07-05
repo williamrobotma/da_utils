@@ -132,3 +132,7 @@ class TempFolderHolder:
 
         self._is_temp = False
 
+
+    def is_temp(self):
+        """Returns whether the output folder is temporary."""
+        return self._is_temp
