@@ -110,7 +110,7 @@ class TempFolderHolder:
 
         return self.curr_out_folder
 
-    def copy_out(self):
+    def copy_out(self, clear_temp=True):
         """If temp folder is different from final folder, copy out to final."""
 
         if not os.path.exists(self.real_out_folder):
@@ -126,8 +126,9 @@ class TempFolderHolder:
                 self.real_out_folder,
                 dirs_exist_ok=True,
             )
+
+            if clear_temp:
+                shutil.rmtree(self.curr_out_folder)
+
         self._is_temp = False
 
-    def is_temp(self):
-        """Returns whether the output folder is temporary."""
-        return self._is_temp
