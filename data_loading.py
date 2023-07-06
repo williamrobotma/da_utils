@@ -202,20 +202,19 @@ def load_st_spots(
 
 
     """
-    scaler_name = processed_data_dir.rstrip('/').split('/')[-1] # get last dir
+    scaler_name = processed_data_dir.rstrip("/").split("/")[-1]  # get last dir
 
     if samp_split:
-        fname = "mat_sp_samp_split_d.h5ad"
+        fname = "mat_sp_samp_split_d"
     elif st_split:
-        if one_model and scaler_name != "unscaled":
-            fname = "mat_sp_split_d_one_model.h5ad"
-        else:
-            fname = "mat_sp_split_d.h5ad"
+        fname = "mat_sp_split_d"
     else:
-        if one_model and scaler_name != "unscaled":
-            fname = "mat_sp_train_d_one_model.h5ad"
-        else:
-            fname = "mat_sp_train_d.h5ad"
+        fname = "mat_sp_train_d"
+
+    if one_model and scaler_name != "unscaled":
+        fname = f"{fname}_one_model.h5ad"
+    else:
+        fname = f"{fname}.h5ad"
 
     in_path = os.path.join(processed_data_dir, fname)
     adata = sc.read_h5ad(in_path)
@@ -229,8 +228,13 @@ def load_st_spots(
             if len(sub_samp) > 0:
                 mat_sp_d[l1][l2] = sub_samp.X.copy()
                 mat_sp_meta_d[l1][l2] = sub_samp.obs.copy()
-        if not st_split and not samp_split:
+        if not st_split and not samp_split and not one_model:
             mat_sp_d[l1]["test"] = mat_sp_d[l1]["train"]
+            mat_sp_meta_d[l1]["test"] = mat_sp_meta_d[l1]["train"]
+
+    if one_model and not st_split:
+        mat_sp_d["test"] = mat_sp_d["train"]
+        mat_sp_meta_d["test"] = mat_sp_meta_d["train"]
 
     return mat_sp_d, mat_sp_meta_d
 

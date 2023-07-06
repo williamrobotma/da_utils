@@ -182,7 +182,7 @@ class Evaluator:
         else:
             self.splits = ("train", "val")
 
-        if self.data_params.get("samp_split", False):
+        if self.data_params.get("samp_split"):
             self.st_sample_id_d = {}
             for split in self.splits:
                 if split == "val":
@@ -198,6 +198,15 @@ class Evaluator:
                 for sid in self.st_sample_id_d[split]:
                     self.mat_sp_d[sid] = mat_sp_d[split][sid]
 
+        elif self.data_params.get("st_split"):
+            pass
+            # TODO: add st_split
+        elif self.data_params.get("one_model"):
+            self.st_sample_id_d = {"": st_sample_id_l}
+
+            self.mat_sp_d = {}
+            for sid in self.st_sample_id_d[""]:
+                self.mat_sp_d[sid] = mat_sp_d["test"][sid]
         else:
             self.st_sample_id_d = {"": st_sample_id_l}
             self.mat_sp_d = {k: v["test"] for k, v in mat_sp_d.items()}
@@ -212,7 +221,10 @@ class Evaluator:
 
         self.pretrain_folder = os.path.join(model_folder, "pretrain")
         self.advtrain_folder = os.path.join(model_folder, "advtrain")
-        self.samp_split_folder = os.path.join(self.advtrain_folder, "samp_split")
+        if self.data_params.get("samp_split"):
+            self.samp_split_folder = os.path.join(self.advtrain_folder, "samp_split")
+        else:
+            self.samp_split_folder = os.path.join(self.advtrain_folder, "one_model")
 
         self.model_fname = "final_model"
         # self.pretrain_model_path = os.path.join(pretrain_folder, f"final_model.pth")
@@ -310,10 +322,8 @@ class Evaluator:
 
         splits, _ = self._get_splits_sids()
 
-        if self.data_params.get("samp_split", False):
+        if self.data_params.get("samp_split") or self.data_params.get("one_model"):
             model = ModelWrapper(self.samp_split_folder, name=self.model_fname)
-        elif self.data_params.get("one_model", False):
-            model = ModelWrapper(self.advtrain_folder, name=self.model_fname)
         else:
             model = None
 
@@ -982,8 +992,12 @@ class Evaluator:
 
             colors = [color_dict[name] for name in cell_type_index]
         else:
-            splits = ["train"]
-            sids = self.st_sample_id_d["train"]
+            if self.data_params.get("st_split") or self.data_params.get("samp_split"):
+                splits = ["train"]
+                sids = self.st_sample_id_d["train"]
+            else:
+                splits = [""]
+                sids = self.st_sample_id_d[""]
 
         st_cell_types_to_sc = {re.sub("( |\/)", ".", name): name for name in cell_type_index}
 
@@ -1085,15 +1099,16 @@ class Evaluator:
             adata_st_d[sid].obsm["spatial"] = adata_st_d[sid].obs[["X", "Y"]].values
 
         print("Getting predictions: ")
-        if self.data_params.get("samp_split", False):
+        if self.data_params.get("samp_split") or self.data_params.get("one_model"):
             path = self.samp_split_folder
-        elif self.data_params.get("one_model", False):
-            path = self.advtrain_folder
         else:
             path = None
 
-        if self.args_dict.get("early_stopping") and self.data_params.get("samp_split"):
-            val_sids = self.st_sample_id_d["train"]
+        if self.args_dict.get("early_stopping"):
+            if self.data_params.get("samp_split") or self.data_params.get("st_split"):
+                val_sids = self.st_sample_id_d["train"]
+            else:
+                val_sids = self.st_sample_id_d[""]
 
             if self.temp_folder_holder.is_temp():
                 new_path = os.path.join(self.results_folder, "curr_models")
@@ -1348,10 +1363,8 @@ class Evaluator:
                 for sample_id in sids[1:]:
                     self.jsd_d["noda"][split][sample_id] = score
 
-        if self.data_params.get("samp_split", False):
+        if self.data_params.get("samp_split") or self.data_params.get("one_model"):
             model = ModelWrapper(self.samp_split_folder, name=self.model_fname)
-        elif self.data_params.get("one_model", False):
-            model = ModelWrapper(self.advtrain_folder, name=self.model_fname)
         else:
             model = None
 
@@ -1388,9 +1401,7 @@ class Evaluator:
         return
 
     def produce_results(self):
-        if self.args_dict.get("early_stopping", False) and self.data_params.get(
-            "samp_split", False
-        ):
+        if self.args_dict.get("early_stopping", False):
             print("Cleaning up ... ")
             if self.temp_folder_holder.is_temp():
                 # clean up temp folder before copying back
