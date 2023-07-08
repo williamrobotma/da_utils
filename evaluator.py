@@ -113,8 +113,10 @@ class Evaluator:
         self.data_params = self.config["data_params"]
         self.model_params = self.config["model_params"]
         self.train_params = self.config["train_params"]
-
-        lib_seed_path = str(self.lib_params.get("manual_seed", "random"))
+        if self.args_dict["seed_override"] is None:
+            lib_seed_path = str(self.lib_params.get("manual_seed", "random"))
+        else:
+            lib_seed_path = str(self.args_dict["seed_override"])
 
         model_rel_path = data_loading.get_model_rel_path(
             self.args_dict["modelname"],
@@ -123,11 +125,11 @@ class Evaluator:
             **self.data_params,
         )
 
-        model_folder = os.path.join("model", model_rel_path)
+        model_folder = os.path.join(self.args_dict["model_dir"], model_rel_path)
 
         if self.args_dict["tmpdir"]:
             real_model_folder = model_folder
-            model_folder = os.path.join(self.args_dict["tmpdir"], "model")
+            model_folder = os.path.join(self.args_dict["tmpdir"], self.args_dict["model_dir"])
 
             shutil.copytree(real_model_folder, model_folder, dirs_exist_ok=True)
 
@@ -143,14 +145,16 @@ class Evaluator:
         if self.args_dict["reverse_val"]:
             model_rel_path_l = model_rel_path.split(os.sep)
             results_folder = os.path.join(
-                "results", os.sep.join(model_rel_path_l[:3]), "reverse_val"
+                self.args_dict["results_dir"], os.sep.join(model_rel_path_l[:3]), "reverse_val"
             )
         else:
-            results_folder = os.path.join("results", model_rel_path)
+            results_folder = os.path.join(self.args_dict["results_dir"], model_rel_path)
 
         self.temp_folder_holder = TempFolderHolder()
         temp_results_folder = (
-            os.path.join(self.args_dict["tmpdir"], "results") if self.args_dict["tmpdir"] else None
+            os.path.join(self.args_dict["tmpdir"], self.args_dict["results_dir"])
+            if self.args_dict["tmpdir"]
+            else None
         )
         self.results_folder = self.temp_folder_holder.set_output_folder(
             temp_results_folder, results_folder
