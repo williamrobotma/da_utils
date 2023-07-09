@@ -292,14 +292,18 @@ def load_sc_dicts(selected_dir):
     return sc_sub_dict, sc_sub_dict2
 
 
-def _ps_fname(n_mix):
-    return f"sc_{n_mix}mix.hdf5"
+def _ps_fname(n_mix, seed_int=-1):
+    if seed_int >= 0:
+        return f"sc_{n_mix}mix_{seed_int}.hdf5"
+    else:
+        return f"sc_{n_mix}mix.hdf5"
 
 
 def load_pseudospots(
     processed_data_dir,
     n_mix=DEFAULT_N_MIX,
     n_spots=None,
+    seed_int=-1,
     **kwargs,
 ):
     """Loads preprocessed sc pseudospots.
@@ -322,7 +326,7 @@ def load_pseudospots(
     """
     sc_mix_d = {}
     lab_mix_d = {}
-    with h5py.File(os.path.join(processed_data_dir, _ps_fname(n_mix)), "r") as f:
+    with h5py.File(os.path.join(processed_data_dir, _ps_fname(n_mix, seed_int=seed_int)), "r") as f:
         for split in SPLITS:
             sc_mix_d[split] = f[f"X/{split}"][()]
             lab_mix_d[split] = f[f"y/{split}"][()]
@@ -333,7 +337,7 @@ def load_pseudospots(
     return sc_mix_d, lab_mix_d
 
 
-def save_pseudospots(lab_mix_d, sc_mix_s_d, data_dir, n_mix):
+def save_pseudospots(lab_mix_d, sc_mix_s_d, data_dir, n_mix, seed_int=-1):
     """Saves preprocessed sc pseudospots to hdf5 files.
 
     Args:
@@ -343,7 +347,7 @@ def save_pseudospots(lab_mix_d, sc_mix_s_d, data_dir, n_mix):
         n_mix (int): Number of sc samples in each spot.
 
     """
-    with h5py.File(os.path.join(data_dir, _ps_fname(n_mix)), "w") as f:
+    with h5py.File(os.path.join(data_dir, _ps_fname(n_mix, seed_int=seed_int)), "w") as f:
         grp_x = f.create_group("X")
         grp_y = f.create_group("y")
         for split in SPLITS:

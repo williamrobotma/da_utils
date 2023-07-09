@@ -221,7 +221,11 @@ class Evaluator:
             self.lab_mix_d,
             self.sc_sub_dict,
             self.sc_sub_dict2,
-        ) = data_loading.load_sc(self.selected_dir, **self.data_params)
+        ) = data_loading.load_sc(
+            self.selected_dir,
+            seed_int=int(self.args_dict["ps_seed"]),
+            **self.data_params,
+        )
 
         self.pretrain_folder = os.path.join(model_folder, "pretrain")
         self.advtrain_folder = os.path.join(model_folder, "advtrain")
