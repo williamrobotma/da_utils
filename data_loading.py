@@ -1,6 +1,7 @@
 """Data loading functions."""
 import os
 import pickle
+from copy import copy
 
 import h5py
 import scanpy as sc
@@ -85,7 +86,7 @@ def get_selected_dir(
     n_markers=DEFAULT_N_MARKERS,
     all_genes=False,
     **kwargs,
-):
+) -> str:
     """Get directory of GEx data with selected gene subset between sc and st.
 
     Args:
@@ -109,7 +110,7 @@ def get_selected_dir(
     return os.path.join(dset_dir, "preprocessed", selected_rel_path)
 
 
-def get_selected_rel_path(sc_id, st_id, n_markers, all_genes):
+def get_selected_rel_path(sc_id, st_id, n_markers, all_genes) -> str:
     """Get path of GEx data with selected gene subset between sc and st,
     relative to top-level data directory.
 
@@ -226,7 +227,7 @@ def load_st_spots(
         for l2 in adata.obs.iloc[:, 1].unique():
             sub_samp = adata[(adata.obs.iloc[:, 0] == l1) & (adata.obs.iloc[:, 1] == l2)]
             if len(sub_samp) > 0:
-                mat_sp_d[l1][l2] = sub_samp.X.copy()
+                mat_sp_d[l1][l2] = copy(sub_samp.X)
                 mat_sp_meta_d[l1][l2] = sub_samp.obs.copy()
         if not st_split and not samp_split and not one_model:
             mat_sp_d[l1]["test"] = mat_sp_d[l1]["train"]
@@ -328,8 +329,8 @@ def load_pseudospots(
     lab_mix_d = {}
     with h5py.File(os.path.join(processed_data_dir, _ps_fname(n_mix, seed_int=seed_int)), "r") as f:
         for split in SPLITS:
-            sc_mix_d[split] = f[f"X/{split}"][()]
-            lab_mix_d[split] = f[f"y/{split}"][()]
+            sc_mix_d[split] = f[f"X/{split}"][()]  # type: ignore
+            lab_mix_d[split] = f[f"y/{split}"][()]  # type: ignore
 
     if n_spots is not None:
         sc_mix_d["train"] = sc_mix_d["train"][:n_spots]

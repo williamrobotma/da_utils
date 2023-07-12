@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from joblib import Parallel, delayed, effective_n_jobs
+from scipy.sparse import issparse
 from sklearn import preprocessing
 
 
@@ -46,11 +47,17 @@ def random_mix(X, y, nmix=5, n_samples=10000, seed=0, n_jobs=1):
     """
     # Define empty lists
     pseudo_gex, ctps = [], []
-    ys_ = preprocessing.OneHotEncoder().fit_transform(y.reshape(-1, 1)).toarray()
+
+    ys_ = preprocessing.OneHotEncoder().fit_transform(y.reshape(-1, 1))
+    try:
+        ys_ = ys_.toarray()  # type: ignore
+    except AttributeError:
+        pass
+    _X = X.toarray() if issparse(X) else X
 
     rstate = np.random.RandomState(seed)
     fraction_all = rstate.rand(n_samples, nmix)
-    randindex_all = rstate.randint(len(X), size=(n_samples, nmix))
+    randindex_all = rstate.randint(len(_X), size=(n_samples, nmix))
 
     def _get_pseudo_sample(i):
         # fraction: random fraction across the "nmix" number of sampled cells
@@ -64,7 +71,7 @@ def random_mix(X, y, nmix=5, n_samples=10000, seed=0, n_jobs=1):
         # Calculate the fraction of cell types in the cell mixture
         yy = np.sum(ymix * fraction, axis=0)
         # Calculate weighted gene expression of the cell mixture
-        XX = np.asarray(X[randindex]) * fraction
+        XX = np.asarray(_X[randindex]) * fraction
         XX_ = np.sum(XX, axis=0)
 
         return XX_, yy
