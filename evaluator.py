@@ -189,7 +189,7 @@ class Evaluator:
         if self.data_params.get("samp_split"):
             self.st_sample_id_d = {}
             for split in self.splits:
-                if split == "val":
+                if split not in mat_sp_d:
                     continue
                 self.st_sample_id_d[split] = [
                     sid for sid in st_sample_id_l if sid in mat_sp_d[split].keys()
@@ -197,7 +197,7 @@ class Evaluator:
 
             self.mat_sp_d = {}
             for split in self.splits:
-                if split == "val":
+                if split not in mat_sp_d:
                     continue
                 for sid in self.st_sample_id_d[split]:
                     self.mat_sp_d[sid] = mat_sp_d[split][sid]
@@ -1001,8 +1001,14 @@ class Evaluator:
             colors = [color_dict[name] for name in cell_type_index]
         else:
             if self.data_params.get("st_split") or self.data_params.get("samp_split"):
-                splits = ["train"]
-                sids = self.st_sample_id_d["train"]
+                splits = []
+                for split in self.splits:
+                    for adata_st in adata_st_d.values():
+                        if split in adata_st.obs["split"]:
+                            splits.append(split)
+                            break
+
+                sids = sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
             else:
                 splits = [""]
                 sids = self.st_sample_id_d[""]
@@ -1114,7 +1120,11 @@ class Evaluator:
 
         if self.args_dict.get("early_stopping"):
             if self.data_params.get("samp_split") or self.data_params.get("st_split"):
-                val_sids = self.st_sample_id_d["train"]
+                val_sids = (
+                    self.st_sample_id_d["val"]
+                    if "val" in self.st_sample_id_d
+                    else self.st_sample_id_d["train"]
+                )
             else:
                 val_sids = self.st_sample_id_d[""]
 
