@@ -1,42 +1,47 @@
 #!/usr/bin/env python3
 
 # %%
+import gc
 import os
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
 # %%
-spatialLIBD_dir = "data/dlpfc/spatialLIBD_data"
+SPATIALLIBD_DIR = "data/dlpfc/spatialLIBD_data"
 
 
 # %%
 try:
-    spots = pd.read_csv(
-        os.path.join(spatialLIBD_dir, "spatialLIBD_spot_counts.csv"), header=0, index_col=0, sep=","
-    )
-    st = pd.read_csv(os.path.join(spatialLIBD_dir, "spatialLIBD_spot_st.csv"))
-    gene_meta = pd.read_csv(os.path.join(spatialLIBD_dir, "gene_meta.csv"))
-    cell_type = pd.read_csv(os.path.join(spatialLIBD_dir, "RowDataTable1.csv"))
-    csr = pd.read_csv(
-        os.path.join(spatialLIBD_dir, "spatialLIBD_csr_counts_sample_id.csv"), index_col=0
-    )
-
-    spots.to_pickle(os.path.join(spatialLIBD_dir, "spatialLIBD_spot_counts.pkl"))
-    st.to_pickle(os.path.join(spatialLIBD_dir, "spatialLIBD_spot_st.pkl"))
-    gene_meta.to_pickle(os.path.join(spatialLIBD_dir, "gene_meta.pkl"))
-    cell_type.to_pickle(os.path.join(spatialLIBD_dir, "RowDataTable1.pkl"))
-    csr.to_pickle(os.path.join(spatialLIBD_dir, "spatialLIBD_csr_counts_sample_id.pkl"))
-
-    # spots = pd.read_pickle(os.path.join(spatialLIBD_dir, 'spatialLIBD_spot_counts.pkl'))
-    # st = pd.read_pickle(os.path.join(spatialLIBD_dir, 'spatialLIBD_spot_st.pkl'))
-    # gene_meta = pd.read_pickle(os.path.join(spatialLIBD_dir, 'gene_meta.pkl'))
-    # cell_type = pd.read_pickle(os.path.join(spatialLIBD_dir, 'RowDataTable1.pkl'))
-    # csr = pd.read_pickle(os.path.join(spatialLIBD_dir, 'spatialLIBD_csr_counts_sample_id.pkl'))
+    spots = pd.read_pickle(os.path.join(SPATIALLIBD_DIR, "spatialLIBD_spot_counts.pkl"))
+    st = pd.read_pickle(os.path.join(SPATIALLIBD_DIR, "spatialLIBD_spot_st.pkl"))
+    gene_meta = pd.read_pickle(os.path.join(SPATIALLIBD_DIR, "gene_meta.pkl"))
+    cell_type = pd.read_pickle(os.path.join(SPATIALLIBD_DIR, "RowDataTable1.pkl"))
+    csr = pd.read_pickle(os.path.join(SPATIALLIBD_DIR, "spatialLIBD_csr_counts_sample_id.pkl"))
 except FileNotFoundError as e:
-    raise FileNotFoundError(
-        f"Download from spatialLIBD and convert to .csv into {spatialLIBD_dir}"
-    ) from e
+    try:
+        spots = pd.read_csv(
+            os.path.join(SPATIALLIBD_DIR, "spatialLIBD_spot_counts.csv"),
+            header=0,
+            index_col=0,
+            sep=",",
+        )
+        st = pd.read_csv(os.path.join(SPATIALLIBD_DIR, "spatialLIBD_spot_st.csv"))
+        gene_meta = pd.read_csv(os.path.join(SPATIALLIBD_DIR, "gene_meta.csv"))
+        cell_type = pd.read_csv(os.path.join(SPATIALLIBD_DIR, "RowDataTable1.csv"))
+        csr = pd.read_csv(
+            os.path.join(SPATIALLIBD_DIR, "spatialLIBD_csr_counts_sample_id.csv"), index_col=0
+        )
+
+        spots.to_pickle(os.path.join(SPATIALLIBD_DIR, "spatialLIBD_spot_counts.pkl"))
+        st.to_pickle(os.path.join(SPATIALLIBD_DIR, "spatialLIBD_spot_st.pkl"))
+        gene_meta.to_pickle(os.path.join(SPATIALLIBD_DIR, "gene_meta.pkl"))
+        cell_type.to_pickle(os.path.join(SPATIALLIBD_DIR, "RowDataTable1.pkl"))
+        csr.to_pickle(os.path.join(SPATIALLIBD_DIR, "spatialLIBD_csr_counts_sample_id.pkl"))
+    except FileNotFoundError as e:
+        raise FileNotFoundError(
+            f"Download from spatialLIBD and convert to .csv into {SPATIALLIBD_DIR}"
+        ) from e
 
 
 # %%
@@ -130,11 +135,18 @@ cell_type = cell_type.drop(["Unnamed: 0", "gene_biotype", "ID"], axis=1)
 
 
 # %%
+ID_to_symbol_d = cell_type_idx_df.ID.reset_index().set_index("ID")["Symbol"].to_dict()
+
+
+# %%
 del spots
 del spot
 del gene_meta
 del st
+del cell_type
+del cell_type_idx_df
 
+gc.collect()
 
 # %%
 wide = (
@@ -149,10 +161,6 @@ wide = (
 # %%
 counts_df = wide
 print(counts_df)
-
-
-# %%
-ID_to_symbol_d = cell_type_idx_df.ID.reset_index().set_index("ID")["Symbol"].to_dict()
 
 
 # %%
@@ -176,21 +184,37 @@ print(dlpfc)
 
 # %%
 temp = pd.concat([dlpfc, counts_df], join="inner", axis=1)
+
+
+# %%
+temp = temp.drop(
+    columns=[
+        "X",
+        "Y",
+        "index",
+        "key",
+        "subject",
+        "replicate",
+        "Cluster",
+        "sum_umi",
+        "sum_gene",
+        "cell_count",
+        "in_tissue",
+        "spatialLIBD",
+        "array_col",
+        "array_row",
+    ]
+)
 print(temp)
 
 
 # %%
-temp = temp.iloc[:, 15:]
-print(temp)
+# same_genes = cell_type[cell_type.index.isin(temp.columns)]
+# print(same_genes)
 
 
 # %%
-same_genes = cell_type[cell_type.index.isin(temp.columns)]
-print(same_genes)
-
-
-# %%
-counts_df.to_pickle(os.path.join(spatialLIBD_dir, "counts_df.pkl"))
+counts_df.to_pickle(os.path.join(SPATIALLIBD_DIR, "counts_df.pkl"))
 
 
 # %%
@@ -198,28 +222,8 @@ print(dlpfc)
 
 
 # %%
-dlpfc.to_pickle(os.path.join(spatialLIBD_dir, "dlpfc.pkl"))
+dlpfc.to_pickle(os.path.join(SPATIALLIBD_DIR, "dlpfc.pkl"))
 
 
 # %%
-temp.to_pickle(os.path.join(spatialLIBD_dir, "temp.pkl"))
-
-
-# %%
-# with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-#     display(spots.iloc[0])
-
-
-# %%
-# spots[spots.sample_id == 151673].cell_count.value_counts()
-
-
-# %%
-# sns.displot(spots[spots.sample_id == 151673].cell_count)
-
-
-# %%
-# spots[spots.sample_id == 151673].cell_count.describe()
-
-
-# %%
+temp.to_pickle(os.path.join(SPATIALLIBD_DIR, "temp.pkl"))
