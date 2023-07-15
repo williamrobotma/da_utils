@@ -289,11 +289,20 @@ class Evaluator:
         logger.info("Running RF50")
         logger.debug(f"emb_train dtype: {emb_train.dtype}")
         logger.debug("fitting pca 50")
-        pca = fit_pca(emb_train, n_components=min(50, emb_train.shape[1]))
 
-        emb_train_50 = pca.transform(emb_train)
-        logger.debug("transforming pca 50 test")
-        emb_test_50 = pca.transform(emb_test)
+        n_components=min(50, emb_train.shape[1])
+        for i in range(n_components):
+            try:
+                pca = fit_pca(emb_train, n_components=n_components - i)
+
+                emb_train_50 = pca.transform(emb_train)
+                emb_test_50 = pca.transform(emb_test)
+            except numpy.linalg.LinAlgError:
+                if i >= len(n_components) - 1:
+                    raise RuntimeError("PCA failed to converge")
+                warnings.warn(f"n_components={n_components - i} did not converge, trying {n_components - (i + 1)}", RuntimeWarning)
+            else:
+                break
 
         logger.debug("initialize brfc")
         n_jobs = effective_n_jobs(int(self.args_dict["njobs"]))
