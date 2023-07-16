@@ -34,11 +34,11 @@ from src.da_models.model_utils.utils import (
 )
 from src.da_utils import data_loading, evaluation
 from src.da_utils.output_utils import TempFolderHolder
-from src.da_utils.scripts.data.preprocessing_mouse_GSE115746 import (
+from src.data.preprocessing_mouse_GSE115746 import (
     cell_cluster_cell_type_to_spot_composition,
     cell_subclass_to_spot_composition,
 )
-from src.da_utils.scripts.data.preprocessing_spotless import get_st_sub_map
+from src.data.preprocessing_spotless import get_st_sub_map
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +290,7 @@ class Evaluator:
         logger.debug(f"emb_train dtype: {emb_train.dtype}")
         logger.debug("fitting pca 50")
 
-        n_components=min(50, emb_train.shape[1])
+        n_components = min(50, emb_train.shape[1])
         for i in range(n_components):
             try:
                 pca = fit_pca(emb_train, n_components=n_components - i)
@@ -300,7 +300,10 @@ class Evaluator:
             except numpy.linalg.LinAlgError:
                 if i >= len(n_components) - 1:
                     raise RuntimeError("PCA failed to converge")
-                warnings.warn(f"n_components={n_components - i} did not converge, trying {n_components - (i + 1)}", RuntimeWarning)
+                warnings.warn(
+                    f"n_components={n_components - i} did not converge, trying {n_components - (i + 1)}",
+                    RuntimeWarning,
+                )
             else:
                 break
 
