@@ -253,7 +253,8 @@ class Evaluator:
             y="PC2",
             hue="domain",
             ax=axs[0][0],
-            marker=".",
+            marker="o",
+            s=5000 / pca_da_df.shape[0],
         )
         axs.flat[0].set_title("DA")
 
@@ -271,7 +272,8 @@ class Evaluator:
                 y="PC2",
                 hue="domain",
                 ax=axs[0][1],
-                marker=".",
+                marker="o",
+                s=5000 / pca_da_df.shape[0],
             )
             axs.flat[1].set_title("No DA")
 
@@ -297,7 +299,7 @@ class Evaluator:
 
                 emb_train_50 = pca.transform(emb_train)
                 emb_test_50 = pca.transform(emb_test)
-            except numpy.linalg.LinAlgError:
+            except np.linalg.LinAlgError:
                 if i >= len(n_components) - 1:
                     raise RuntimeError("PCA failed to converge")
                 warnings.warn(
@@ -1015,12 +1017,13 @@ class Evaluator:
             if self.data_params.get("st_split") or self.data_params.get("samp_split"):
                 splits = []
                 for split in self.splits:
-                    for adata_st in adata_st_d.values():
-                        if split in adata_st.obs["split"]:
-                            splits.append(split)
-                            break
+                    if split in self.st_sample_id_d:
+                        for sid in self.st_sample_id_d[split]:
+                            if sid in pred_sp_d.keys():
+                                splits.append(split)
+                                break
 
-                sids = sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
+                sids = [sid for split in splits for sid in self.st_sample_id_d[split]]
             else:
                 splits = [""]
                 sids = self.st_sample_id_d[""]
@@ -1136,6 +1139,9 @@ class Evaluator:
                     self.st_sample_id_d["val"]
                     if "val" in self.st_sample_id_d
                     else self.st_sample_id_d["train"]
+                    # self.st_sample_id_d["test"]
+                    # if "sdf" in self.st_sample_id_d
+                    # else self.st_sample_id_d["train"]
                 )
             else:
                 val_sids = self.st_sample_id_d[""]
@@ -1173,7 +1179,8 @@ class Evaluator:
                 )
 
                 logging.debug(f"n_jobs_samples: {n_jobs_samples}")
-
+                for adata in adata_st_d.values():
+                    print(adata.obs.head())
                 aucs = Parallel(n_jobs=n_jobs_samples, verbose=100)(
                     delayed(self._plot_spatial_scatterpie)(
                         adata_st_d,
@@ -1238,9 +1245,12 @@ class Evaluator:
             print(f"Best epoch: {best_epoch}")
 
             fig, ax = plt.subplots(figsize=(15, 5), dpi=50)
-            ax.plot(aucs_mean.index.to_series(), aucs_mean, marker="o")
+            # ax.plot(aucs_mean.index.to_series(), aucs_mean, marker="o")
+            ax.plot(aucs_mean.index.to_series(), aucs_mean)
             ax.axvline(best_epoch, color="tab:green")
             ax.set_ylim(0, 1)
+
+            aucs_mean.to_csv("tables/early_stopping_LONG_TRAIN_VAL.csv")
 
             n_epochs = aucs_mean.index.max() + 1
             x_text = best_epoch + (2 if best_epoch < n_epochs * 0.75 else -2)

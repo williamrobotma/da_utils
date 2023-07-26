@@ -85,6 +85,7 @@ def get_selected_dir(
     st_id=DEF_ST_ID,
     n_markers=DEFAULT_N_MARKERS,
     all_genes=False,
+    normalize=True,
     **kwargs,
 ) -> str:
     """Get directory of GEx data with selected gene subset between sc and st.
@@ -106,11 +107,13 @@ def get_selected_dir(
             selected.
 
     """
-    selected_rel_path = get_selected_rel_path(sc_id, st_id, n_markers, all_genes)
+    selected_rel_path = get_selected_rel_path(
+        sc_id, st_id, n_markers, all_genes, normalize=normalize
+    )
     return os.path.join(dset_dir, "preprocessed", selected_rel_path)
 
 
-def get_selected_rel_path(sc_id, st_id, n_markers, all_genes) -> str:
+def get_selected_rel_path(sc_id, st_id, n_markers, all_genes, normalize=True) -> str:
     """Get path of GEx data with selected gene subset between sc and st,
     relative to top-level data directory.
 
@@ -130,6 +133,8 @@ def get_selected_rel_path(sc_id, st_id, n_markers, all_genes) -> str:
     intersec_name = f"{sc_id}_{st_id}"
     n_markers_str = "all" if all_genes else f"{n_markers}markers"
     selected_rel_path = os.path.join(intersec_name, n_markers_str)
+    if normalize == False:
+        selected_rel_path = os.path.join(selected_rel_path, "raw_counts")
     return selected_rel_path
 
 
