@@ -299,7 +299,7 @@ class Evaluator:
 
                 emb_train_50 = pca.transform(emb_train)
                 emb_test_50 = pca.transform(emb_test)
-            except numpy.linalg.LinAlgError:
+            except np.linalg.LinAlgError:
                 if i >= len(n_components) - 1:
                     raise RuntimeError("PCA failed to converge")
                 warnings.warn(
