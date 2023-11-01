@@ -34,11 +34,11 @@ from src.da_models.model_utils.utils import (
 )
 from src.da_utils import data_loading, evaluation
 from src.da_utils.output_utils import TempFolderHolder
-from src.preprocessing_mouse_GSE115746 import (
+from src.prep_utils import (
     cell_cluster_cell_type_to_spot_composition,
     cell_subclass_to_spot_composition,
+    get_st_sub_map,
 )
-from src.preprocessing_spotless import get_st_sub_map
 
 logger = logging.getLogger(__name__)
 
