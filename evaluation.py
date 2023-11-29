@@ -61,7 +61,7 @@ def recurse_mean_dict(d, d_mean):
             d_mean[k].append(np.mean(v))
 
 
-def recurse_avg_dict(d, d_avg):
+def recurse_avg_dict(d, d_avg, div_by_weights=False):
     """Recursively average the values of dict `d` of lists and append into dict
     `d_avg` of lists.
 
@@ -75,9 +75,14 @@ def recurse_avg_dict(d, d_avg):
     """
     for k, v in d.items():
         if isinstance(v, dict):
-            recurse_avg_dict(v, d_avg[k])
+            recurse_avg_dict(v, d_avg[k], div_by_weights)
         else:
-            d_avg[k].append(np.average(v, weights=d["weights"]))
+            if div_by_weights and k not in {"lr", "weights"}:
+                d_avg[k].append(
+                    np.average(np.divide(v, d["weights"]), weights=d["weights"])
+                )
+            else:
+                d_avg[k].append(np.average(v, weights=d["weights"]))
 
 
 def recurse_running_dict(d, d_hist):
@@ -128,7 +133,9 @@ def format_iters(nested_list, startpoint=False, endpoint=True):
     else:
         for i, l in enumerate(nested_list):
             if not endpoint and i == len(nested_list) - 1:
-                x_i = np.linspace(i, i - 1, len(l + 1), endpoint=False, dtype=np.float32)
+                x_i = np.linspace(
+                    i, i - 1, len(l + 1), endpoint=False, dtype=np.float32
+                )
                 x_i = x_i[1:]
             else:
                 x_i = np.linspace(i, i - 1, len(l), endpoint=False, dtype=np.float32)
