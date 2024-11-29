@@ -1,8 +1,10 @@
 """Evaluation tools"""
+
 import itertools
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 
 def draw_pie(xpos, ypos, dist, colors=None, ax=None, **kwargs):
@@ -61,7 +63,15 @@ def recurse_mean_dict(d, d_mean):
             d_mean[k].append(np.mean(v))
 
 
-def recurse_avg_dict(d, d_avg):
+def recurse_dict_to_numpy(d):
+    for k, v in d.items():
+        if isinstance(v, dict):
+            recurse_dict_to_numpy(d[k])
+        elif torch.is_tensor(v):
+            d[k] = v.detach().cpu().numpy()
+
+
+def recurse_avg_dict(d, d_avg, div_by_weights=False):
     """Recursively average the values of dict `d` of lists and append into dict
     `d_avg` of lists.
 
@@ -75,9 +85,12 @@ def recurse_avg_dict(d, d_avg):
     """
     for k, v in d.items():
         if isinstance(v, dict):
-            recurse_avg_dict(v, d_avg[k])
+            recurse_avg_dict(v, d_avg[k], div_by_weights)
         else:
-            d_avg[k].append(np.average(v, weights=d["weights"]))
+            if div_by_weights and k not in {"lr", "weights"}:
+                d_avg[k].append(np.average(np.divide(v, d["weights"]), weights=d["weights"]))
+            else:
+                d_avg[k].append(np.average(v, weights=d["weights"]))
 
 
 def recurse_running_dict(d, d_hist):
