@@ -3,7 +3,10 @@
 Adapted from: https://github.com/mexchy1000/CellDART
 """
 import math
+import subprocess
+import os
 
+import gffutils
 import matplotlib.pyplot as plt
 import matplotlib_venn
 import numpy as np
@@ -13,6 +16,9 @@ from joblib import Parallel, delayed, effective_n_jobs
 from scipy.sparse import issparse
 from sklearn import preprocessing
 
+ENSEMBL_82_URL = (
+    "ftp://ftp.ensembl.org/pub/grch37/release-84/gtf/homo_sapiens/Homo_sapiens.GRCh37.82.gtf.gz"
+)
 
 def random_mix(X, y, nmix=5, n_samples=10000, seed=0, n_jobs=1):
     """Creates a weighted average random sampling of gene expression, and the
@@ -93,7 +99,14 @@ def random_mix(X, y, nmix=5, n_samples=10000, seed=0, n_jobs=1):
 
 
 def log_minmaxscale(arr):
-    """returns log1pc and min/max normalized arr"""
+    """returns log1pc and min/max normalized arr
+
+    Args:
+        arr (:obj:, array_like of `float`): Matrix to be normalized
+
+    Returns:
+        ndarray: Log1p-transformed and min-max scaled array
+    """
     arrd = len(arr)
     arr = np.log1p(arr)
 
@@ -225,6 +238,9 @@ def qc_sc(
         pct_counts_mt (int): Maximum percentage of mitochondrial genes a cell
             can express. Defaults to 5.
         remove_mt (bool): Remove mitochondrial genes. Defaults to False.
+
+    Returns:
+        None: The input AnnData object is modified in-place.
     """
     sc.pp.filter_genes(adata, min_cells=min_cells)
     sc.pp.filter_cells(adata, min_genes=min_genes)
@@ -260,3 +276,132 @@ def safe_stratify(stratify):
         return stratify
 
     return None
+
+
+def download_gtf(dir, url):
+    """Downloads and extracts a GTF file from a URL.
+
+    Args:
+        dir (str): Directory to download the file to.
+        url (str): URL to download the GTF file from.
+
+    Returns:
+        str: Path to the extracted GTF file.
+    """
+    os.makedirs(dir, exist_ok=True)
+
+    gtf_gz = os.path.basename(url)
+    gtf_gz_path = os.path.join(dir, gtf_gz)
+    gtf_path = os.path.splitext(gtf_gz_path)[0]
+
+    if not os.path.exists(gtf_path):
+        if not os.path.exists(gtf_gz_path):
+            print(f"Downloading {url} to {gtf_gz_path}")
+            subprocess.run(
+                [
+                    "curl",
+                    "--create-dirs",
+                    "-o",
+                    gtf_gz_path,
+                    url,
+                ]
+            )
+        print(f"Unzipping {gtf_gz_path}")
+        subprocess.run(
+            [
+                "gunzip",
+                gtf_gz_path,
+            ]
+        )
+
+    return gtf_path
+
+
+def get_reference_genome_db(
+    dir,
+    gtf_fname="Homo_sapiens.GRCh38.84.gtf",
+    cache_fname=None,
+    use_cache=True,
+):
+    """Creates or loads a gffutils database from a GTF file.
+
+    Args:
+        dir (str): Directory containing the GTF file.
+        gtf_fname (str): Filename of the GTF file. Defaults to
+            "Homo_sapiens.GRCh38.84.gtf".
+        cache_fname (str, optional): Filename for the database cache. If None,
+            will use the GTF filename with a .db extension. Defaults to None.
+        use_cache (bool): Whether to use an existing cache file. Defaults to True.
+
+    Returns:
+        gffutils.FeatureDB: The database of genomic features.
+    """
+    if cache_fname is None:
+        cache_fname = os.path.splitext(gtf_fname)[0] + ".db"
+
+    gtf_path = os.path.join(dir, gtf_fname)
+    cache_path = os.path.join(dir, cache_fname)
+    id_spec = {
+        "exon": "exon_id",
+        "gene": "gene_id",
+        "transcript": "transcript_id",
+        # # [1] These aren't needed for speed, but they do give nicer IDs.
+        # 'CDS': [subfeature_handler],
+        # 'stop_codon': [subfeature_handler],
+        # 'start_codon': [subfeature_handler],
+        # 'UTR':  [subfeature_handler],
+    }
+    if os.path.exists(cache_path) and use_cache:
+        db = gffutils.FeatureDB(cache_path)
+    else:
+        db = gffutils.create_db(
+            gtf_path,
+            cache_path,
+            # Since Ensembl GTF files now come with genes and transcripts already in
+            # the file, we don't want to spend the time to infer them (which we would
+            # need to do in an on-spec GTF file)
+            disable_infer_genes=True,
+            disable_infer_transcripts=True,
+            # Here's where we provide our custom id spec
+            id_spec=id_spec,
+            # "create_unique" runs a lot faster than "merge"
+            # See https://pythonhosted.org/gffutils/database-ids.html#merge-strategy
+            # for details.
+            merge_strategy="create_unique",
+            verbose=True,
+            force=True,
+        )
+
+        for f in db.featuretypes():
+            if f == "gene":
+                continue
+
+            db.delete(db.features_of_type(f), make_backup=False)
+
+    return db
+
+
+def populate_vars_from_ref(adata, db):
+    """Populates the var attribute of an AnnData object with information from a reference genome.
+
+    Args:
+        adata (:obj: AnnData): AnnData object to populate.
+        db (gffutils.FeatureDB): Reference genome database.
+
+    Returns:
+        None: The input AnnData object is modified in-place.
+    """
+    if adata.var_names.name == "gene_ids":
+        gene_ids = adata.var_names.to_series()
+    else:
+        gene_ids = adata.var["gene_ids"]
+
+    attrs = gene_ids.map(lambda x: dict(db[x].attributes))
+    attrs = pd.DataFrame.from_records(attrs, index=attrs.index).agg(lambda x: x.str[0])
+
+    if "gene_ids" in attrs.columns:
+        attrs = attrs.drop(columns=["gene_ids"])
+    if "gene_id" in attrs.columns:
+        attrs = attrs.drop(columns=["gene_id"])
+
+    adata.var = adata.var.join(attrs, how="left", validate="one_to_one")
