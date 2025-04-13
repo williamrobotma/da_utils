@@ -80,7 +80,7 @@ class TempFolderHolder:
         self._is_temp = False
         pass
 
-    def set_output_folder(self, tmp_dir, out_folder):
+    def set_output_folder(self, tmp_dir, out_folder, copy_in=True):
         """Sets current output folder.
 
         If tmp_dir exists, return that as output folder, else use out_folder.
@@ -97,6 +97,11 @@ class TempFolderHolder:
         if tmp_dir:
             self.real_out_folder = out_folder
             self.curr_out_folder = tmp_dir
+            if copy_in and os.path.isdir(out_folder):
+                shutil.copytree(
+                    self.real_out_folder,
+                    self.curr_out_folder,
+                )
             self._is_temp = True
         else:
             self.real_out_folder = self.curr_out_folder = out_folder
