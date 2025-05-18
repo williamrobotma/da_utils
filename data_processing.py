@@ -13,9 +13,6 @@ from joblib import Parallel, delayed, effective_n_jobs
 from scipy.sparse import issparse
 from sklearn import preprocessing
 
-ENSEMBL_82_URL = (
-    "ftp://ftp.ensembl.org/pub/grch37/release-84/gtf/homo_sapiens/Homo_sapiens.GRCh37.82.gtf.gz"
-)
 
 def random_mix(X, y, nmix=5, n_samples=10000, seed=0, n_jobs=1):
     """Creates a weighted average random sampling of gene expression, and the
