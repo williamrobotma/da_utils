@@ -2,8 +2,13 @@
 
 Adapted from: https://github.com/mexchy1000/CellDART
 """
-import math
 
+import math
+import os
+import subprocess
+import warnings
+
+import gffutils
 import matplotlib.pyplot as plt
 import matplotlib_venn
 import numpy as np
@@ -12,6 +17,8 @@ import scanpy as sc
 from joblib import Parallel, delayed, effective_n_jobs
 from scipy.sparse import issparse
 from sklearn import preprocessing
+
+from ._utils import deprecated_to_sc_utils
 
 
 def random_mix(X, y, nmix=5, n_samples=10000, seed=0, n_jobs=1):
@@ -214,6 +221,22 @@ def select_marker_genes(
     return (adata_sc[:, inter_genes], adata_st[:, inter_genes]), df_genelists, (fig, ax)
 
 
+def deprecated_to_sc_utils(func):
+    """Decorator for functions moved to sc_utils.data_utils module."""
+
+    def dep_warning(*args, **kwargs):
+        warnings.warn(
+            f"{func.__name__} was moved to sc_utils.data_utils @ c7929da from "
+            "da_utils.data_processing @ 83173f1; "
+            "this implementation has been deprecated.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        func(*args, **kwargs)
+
+    return dep_warning
+
+
 def qc_sc(
     adata,
     min_cells=3,
@@ -254,3 +277,155 @@ def qc_sc(
 
     if remove_mt:
         adata = adata[:, ~adata.var["mt"]]
+
+
+@deprecated_to_sc_utils
+def safe_stratify(stratify):
+    """Makes stratify arg for sklearn splits safe when there is only one class.
+
+    Args:
+        stratify (array-like): Array to stratify.
+
+    Returns:
+        `stratify` if there is more than one unique value, else None.
+
+    """
+    if len(np.unique(stratify)) > 1:
+        return stratify
+
+    return None
+
+
+@deprecated_to_sc_utils
+def download_gtf(dir, url):
+    """Downloads and extracts a GTF file from a URL.
+
+    Args:
+        dir (str): Directory to download the file to.
+        url (str): URL to download the GTF file from.
+
+    Returns:
+        str: Path to the extracted GTF file.
+    """
+    os.makedirs(dir, exist_ok=True)
+
+    gtf_gz = os.path.basename(url)
+    gtf_gz_path = os.path.join(dir, gtf_gz)
+    gtf_path = os.path.splitext(gtf_gz_path)[0]
+
+    if not os.path.exists(gtf_path):
+        if not os.path.exists(gtf_gz_path):
+            print(f"Downloading {url} to {gtf_gz_path}")
+            subprocess.run(
+                [
+                    "curl",
+                    "--create-dirs",
+                    "-o",
+                    gtf_gz_path,
+                    url,
+                ]
+            )
+        print(f"Unzipping {gtf_gz_path}")
+        subprocess.run(
+            [
+                "gunzip",
+                gtf_gz_path,
+            ]
+        )
+
+    return gtf_path
+
+
+@deprecated_to_sc_utils
+def get_reference_genome_db(
+    dir,
+    gtf_fname="Homo_sapiens.GRCh38.84.gtf",
+    cache_fname=None,
+    use_cache=True,
+):
+    """Creates or loads a gffutils database from a GTF file.
+
+    Adapted from Ryan Dale's (https://www.biostars.org/u/528/) comment at
+    https://www.biostars.org/p/152517/.
+
+    Args:
+        dir (str): Directory containing the GTF file.
+        gtf_fname (str): Filename of the GTF file. Defaults to
+            "Homo_sapiens.GRCh38.84.gtf".
+        cache_fname (str, optional): Filename for the database cache. If None,
+            will use the GTF filename with a .db extension. Defaults to None.
+        use_cache (bool): Whether to use an existing cache file. Defaults to True.
+
+    Returns:
+        gffutils.FeatureDB: The database of genomic features.
+    """
+    if cache_fname is None:
+        cache_fname = os.path.splitext(gtf_fname)[0] + ".db"
+
+    gtf_path = os.path.join(dir, gtf_fname)
+    cache_path = os.path.join(dir, cache_fname)
+    id_spec = {
+        "exon": "exon_id",
+        "gene": "gene_id",
+        "transcript": "transcript_id",
+        # # [1] These aren't needed for speed, but they do give nicer IDs.
+        # 'CDS': [subfeature_handler],
+        # 'stop_codon': [subfeature_handler],
+        # 'start_codon': [subfeature_handler],
+        # 'UTR':  [subfeature_handler],
+    }
+    if os.path.exists(cache_path) and use_cache:
+        db = gffutils.FeatureDB(cache_path)
+    else:
+        db = gffutils.create_db(
+            gtf_path,
+            cache_path,
+            # Since Ensembl GTF files now come with genes and transcripts already in
+            # the file, we don't want to spend the time to infer them (which we would
+            # need to do in an on-spec GTF file)
+            disable_infer_genes=True,
+            disable_infer_transcripts=True,
+            # Here's where we provide our custom id spec
+            id_spec=id_spec,
+            # "create_unique" runs a lot faster than "merge"
+            # See https://pythonhosted.org/gffutils/database-ids.html#merge-strategy
+            # for details.
+            merge_strategy="create_unique",
+            verbose=True,
+            force=True,
+        )
+
+        for f in db.featuretypes():
+            if f == "gene":
+                continue
+
+            db.delete(db.features_of_type(f), make_backup=False)
+
+    return db
+
+
+@deprecated_to_sc_utils
+def populate_vars_from_ref(adata, db):
+    """Populates the var attribute of an AnnData object with information from a reference genome.
+
+    Args:
+        adata (:obj: AnnData): AnnData object to populate.
+        db (gffutils.FeatureDB): Reference genome database.
+
+    Returns:
+        None: The input AnnData object is modified in-place.
+    """
+    if adata.var_names.name == "gene_ids":
+        gene_ids = adata.var_names.to_series()
+    else:
+        gene_ids = adata.var["gene_ids"]
+
+    attrs = gene_ids.map(lambda x: dict(db[x].attributes))
+    attrs = pd.DataFrame.from_records(attrs, index=attrs.index).agg(lambda x: x.str[0])
+
+    if "gene_ids" in attrs.columns:
+        attrs = attrs.drop(columns=["gene_ids"])
+    if "gene_id" in attrs.columns:
+        attrs = attrs.drop(columns=["gene_id"])
+
+    adata.var = adata.var.join(attrs, how="left", validate="one_to_one")
