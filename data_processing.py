@@ -2,9 +2,11 @@
 
 Adapted from: https://github.com/mexchy1000/CellDART
 """
+
 import math
-import subprocess
 import os
+import subprocess
+import warnings
 
 import gffutils
 import matplotlib.pyplot as plt
@@ -16,9 +18,8 @@ from joblib import Parallel, delayed, effective_n_jobs
 from scipy.sparse import issparse
 from sklearn import preprocessing
 
-ENSEMBL_82_URL = (
-    "ftp://ftp.ensembl.org/pub/grch37/release-84/gtf/homo_sapiens/Homo_sapiens.GRCh37.82.gtf.gz"
-)
+from ._utils import deprecated_to_sc_utils
+
 
 def random_mix(X, y, nmix=5, n_samples=10000, seed=0, n_jobs=1):
     """Creates a weighted average random sampling of gene expression, and the
@@ -220,6 +221,22 @@ def select_marker_genes(
     return (adata_sc[:, inter_genes], adata_st[:, inter_genes]), df_genelists, (fig, ax)
 
 
+def deprecated_to_sc_utils(func):
+    """Decorator for functions moved to sc_utils.data_utils module."""
+
+    def dep_warning(*args, **kwargs):
+        warnings.warn(
+            f"{func.__name__} was moved to sc_utils.data_utils @ c7929da from "
+            "da_utils.data_processing @ 83173f1; "
+            "this implementation has been deprecated.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        func(*args, **kwargs)
+
+    return dep_warning
+
+
 def qc_sc(
     adata,
     min_cells=3,
@@ -262,6 +279,7 @@ def qc_sc(
         adata = adata[:, ~adata.var["mt"]]
 
 
+@deprecated_to_sc_utils
 def safe_stratify(stratify):
     """Makes stratify arg for sklearn splits safe when there is only one class.
 
@@ -278,6 +296,7 @@ def safe_stratify(stratify):
     return None
 
 
+@deprecated_to_sc_utils
 def download_gtf(dir, url):
     """Downloads and extracts a GTF file from a URL.
 
@@ -317,6 +336,7 @@ def download_gtf(dir, url):
     return gtf_path
 
 
+@deprecated_to_sc_utils
 def get_reference_genome_db(
     dir,
     gtf_fname="Homo_sapiens.GRCh38.84.gtf",
@@ -324,6 +344,9 @@ def get_reference_genome_db(
     use_cache=True,
 ):
     """Creates or loads a gffutils database from a GTF file.
+
+    Adapted from Ryan Dale's (https://www.biostars.org/u/528/) comment at
+    https://www.biostars.org/p/152517/.
 
     Args:
         dir (str): Directory containing the GTF file.
@@ -381,6 +404,7 @@ def get_reference_genome_db(
     return db
 
 
+@deprecated_to_sc_utils
 def populate_vars_from_ref(adata, db):
     """Populates the var attribute of an AnnData object with information from a reference genome.
 
