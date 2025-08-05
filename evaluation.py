@@ -115,7 +115,6 @@ def recurse_running_dict(d, d_hist):
 def format_iters(nested_list, startpoint=False, endpoint=True):
     """Generates x and y values, given a nested list of iterations by epoch.
 
-
     x will be evenly spaced by epoch, and y will be the flattened values in the
     nested list.
 
@@ -126,8 +125,6 @@ def format_iters(nested_list, startpoint=False, endpoint=True):
 
     Returns:
         Tuple[np.ndarray, np.ndarray]: x and y values.
-
-
     """
 
     x = []

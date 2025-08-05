@@ -88,6 +88,9 @@ class TempFolderHolder:
         Args:
             tmp_dir (str): Temporary directory for output to use.
             out_folder (str): Real, final directory to be used.
+            copy_in (bool): Start by copying existing out_folder to tmp_dir to
+                continue work/avoid overwriting existing files; otherwise,
+                start with empty tmp_dir. Default: ``True``
 
         Returns:
             Output folder path for the course of the script.
@@ -136,7 +139,6 @@ class TempFolderHolder:
                 shutil.rmtree(self.curr_out_folder)
 
         self._is_temp = False
-
 
     def is_temp(self):
         """Returns whether the output folder is temporary."""
