@@ -71,6 +71,10 @@ class DupStdout:
         self._stdout.flush(*args, **kwargs)
         if self.f is not None:
             self.f.flush(*args, **kwargs)
+            os.fsync(self.f.fileno())
+
+    def isatty(self):
+        return self._stdout.isatty()
 
 
 class TempFolderHolder:
