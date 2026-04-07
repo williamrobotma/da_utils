@@ -112,6 +112,30 @@ def recurse_running_dict(d, d_hist):
             d_hist[k].append(v)
 
 
+def recurse_singleton_list_dict(d, d_out=None):
+    """Recursively extracts values of dict `d` of singleton lists.
+
+    Args:
+        d (dict): nested dict of singleton lists
+        d_out (dict): nested dict of values, initialized the same as d but with
+            values instead of singleton lists. If None, will be initialized
+            as an empty dict and filled in.
+
+    Returns:
+        d_out (dict): nested dict of values.
+    """
+    if d_out is None:
+        d_out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            d_out[k] = {}
+            recurse_singleton_list_dict(v, d_out[k])
+        else:
+            d_out[k] = v[0]
+
+    return d_out
+
+
 def format_iters(nested_list, startpoint=False, endpoint=True):
     """Generates x and y values, given a nested list of iterations by epoch.
 
