@@ -1,4 +1,5 @@
 """Data loading functions."""
+
 import os
 import pickle
 from copy import copy
@@ -227,7 +228,9 @@ def load_st_spots(
         mat_sp_d[l1] = {}
         mat_sp_meta_d[l1] = {}
         for l2 in adata.obs.iloc[:, 1].unique():
-            sub_samp = adata[(adata.obs.iloc[:, 0] == l1) & (adata.obs.iloc[:, 1] == l2)]
+            sub_samp = adata[
+                (adata.obs.iloc[:, 0] == l1) & (adata.obs.iloc[:, 1] == l2)
+            ]
             if len(sub_samp) > 0:
                 mat_sp_d[l1][l2] = copy(sub_samp.X)
                 mat_sp_meta_d[l1][l2] = sub_samp.obs.copy()
@@ -353,7 +356,9 @@ def load_pseudospots(
     """
     sc_mix_d = {}
     lab_mix_d = {}
-    with h5py.File(os.path.join(processed_data_dir, _ps_fname(n_mix, seed_int=seed_int)), "r") as f:
+    with h5py.File(
+        os.path.join(processed_data_dir, _ps_fname(n_mix, seed_int=seed_int)), "r"
+    ) as f:
         for split in SPLITS:
             sc_mix_d[split] = f[f"X/{split}"][()]  # type: ignore
             lab_mix_d[split] = f[f"y/{split}"][()]  # type: ignore
@@ -374,7 +379,9 @@ def save_pseudospots(lab_mix_d, sc_mix_s_d, data_dir, n_mix, seed_int=-1):
         n_mix (int): Number of sc samples in each spot.
 
     """
-    with h5py.File(os.path.join(data_dir, _ps_fname(n_mix, seed_int=seed_int)), "w") as f:
+    with h5py.File(
+        os.path.join(data_dir, _ps_fname(n_mix, seed_int=seed_int)), "w"
+    ) as f:
         grp_x = f.create_group("X")
         grp_y = f.create_group("y")
         for split in SPLITS:
